@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Application de Révision</title>
+
+  <!-- Évite l'erreur 404 du favicon dans la console -->
+  <link rel="icon" href="data:,">
+
+  <!-- Feuilles de style -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- SDK Supabase via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <!-- ========================================== -->
+  <!-- SOMMAIRE / SIDEBAR FIXE                   -->
+  <!-- ========================================== -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <h2>📚 Révisions</h2>
+      <button id="btn-toggle-theme" class="btn-icon" title="Changer le thème">🌙</button>
+    </div>
+
+    <!-- Statut Synchronisation -->
+    <div class="sync-info">
+      <span id="sync-status" class="sync-status offline">Hors-ligne (Local)</span>
+      <span id="save-indicator" class="save-indicator hidden">✔ Sauvegardé</span>
+    </div>
+
+    <!-- Liste des matières -->
+    <div class="sidebar-section">
+      <div class="section-title">
+        <span>MATIÈRES</span>
+        <button id="btn-add-subject" class="btn-small" title="Ajouter une matière">+</button>
+      </div>
+      <div id="subjects-list" class="subjects-list">
+        <!-- Généré dynamiquement par script.js -->
+      </div>
+    </div>
+
+    <!-- Authentification Cloud -->
+    <div class="sidebar-footer">
+      <button id="btn-auth-modal" class="btn btn-secondary full-width">🔐 Connexion / Synchro</button>
+      <button id="btn-logout" class="btn btn-danger full-width hidden" style="margin-top: 8px;">Déconnexion</button>
+    </div>
+  </aside>
+
+  <!-- ========================================== -->
+  <!-- CONTENU PRINCIPAL                          -->
+  <!-- ========================================== -->
+  <main class="main-content">
+
+    <!-- Fil d'Ariane -->
+    <div id="breadcrumb" class="breadcrumb">Accueil</div>
+
+    <!-- VUE 1 : ACCUEIL -->
+    <section id="view-home" class="view">
+      <div class="welcome-card">
+        <h1>Bienvenue dans votre espace de révision !</h1>
+        <p>Sélectionnez une matière dans le sommaire à gauche ou créez-en une nouvelle pour commencer à réviser.</p>
+      </div>
+    </section>
+
+    <!-- VUE 2 : MATIÈRE (LISTE DES CHAPITRES) -->
+    <section id="view-subject" class="view hidden">
+      <div class="view-header">
+        <h1 id="subject-title">Titre Matière</h1>
+        <div class="actions">
+          <button id="btn-rename-subject" class="btn btn-secondary">Reno. Matière</button>
+          <button id="btn-delete-subject" class="btn btn-danger">Supprimer</button>
+          <button id="btn-add-chapter" class="btn btn-primary">+ Nouveau chapitre</button>
+        </div>
+      </div>
+      <div id="chapters-grid" class="chapters-grid">
+        <!-- Cartes des chapitres insérées dynamiquement -->
+      </div>
+    </section>
+
+    <!-- VUE 3 : LEÇON & ÉDITEUR -->
+    <section id="view-lesson" class="view hidden">
+      <div class="view-header">
+        <button id="btn-back-to-subject" class="btn btn-secondary">← Retour</button>
+        <div class="actions">
+          <button id="btn-magic-highlight" class="btn btn-magic">✨ Surlignage Magique</button>
+          <button id="btn-start-quiz" class="btn btn-accent">🧠 Lancer un Quiz</button>
+          <button id="btn-delete-chapter" class="btn btn-danger">Supprimer</button>
+        </div>
+      </div>
+
+      <h1 id="chapter-title" contenteditable="true" class="editable-title">Titre du chapitre</h1>
+
+      <!-- Barre d'outils de l'éditeur -->
+      <div class="editor-toolbar">
+        <button class="tool-btn" data-cmd="bold"><b>B</b></button>
+        <button class="tool-btn" data-cmd="italic"><i>I</i></button>
+        <button class="tool-btn" data-cmd="underline"><u>U</u></button>
+        <button class="tool-btn" data-cmd="insertUnorderedList">• Liste</button>
+        <button class="tool-btn" data-cmd="formatBlock" data-val="H2">H2</button>
+        <button class="tool-btn" data-cmd="formatBlock" data-val="H3">H3</button>
+      </div>
+
+      <!-- Zone d'édition du cours -->
+      <div id="editor" class="editor" contenteditable="true" placeholder="Écrivez ou collez votre cours ici..."></div>
+    </section>
+
+    <!-- VUE 4 : QUIZ -->
+    <section id="view-quiz" class="view hidden">
+      <div class="view-header">
+        <button id="btn-exit-quiz" class="btn btn-secondary">← Quitter le Quiz</button>
+      </div>
+      <div id="quiz-container" class="quiz-container">
+        <!-- Généré dynamiquement -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========================================== -->
+  <!-- POPOVER ANNOTATION (SURLIGNAGE MAGIQUE)    -->
+  <!-- ========================================== -->
+  <div id="annotation-popover" class="annotation-popover hidden">
+    <h4>Ajouter une note de révision</h4>
+    <textarea id="annotation-input" placeholder="Explication ou réponse à la question du quiz..."></textarea>
+    <div class="popover-actions">
+      <button id="btn-save-annotation" class="btn btn-primary btn-small">Enregistrer</button>
+      <button id="btn-remove-highlight" class="btn btn-danger btn-small">Supprimer le surlignage</button>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODALE AUTHENTIFICATION                    -->
+  <!-- ========================================== -->
+  <div id="auth-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Connexion / Inscription Cloud</h3>
+        <button id="btn-close-modal" class="btn-icon">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="auth-email">Adresse e-mail :</label>
+          <input type="email" id="auth-email" placeholder="votre@email.com" required>
+        </div>
+        <div class="form-group">
+          <label for="auth-password">Mot de passe :</label>
+          <input type="password" id="auth-password" placeholder="••••••••" required>
+        </div>
+        <div id="auth-message" class="auth-message"></div>
+        <div class="modal-actions">
+          <button id="btn-login" class="btn btn-primary">Se connecter</button>
+          <button id="btn-signup" class="btn btn-secondary">S'inscrire</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
