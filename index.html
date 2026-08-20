@@ -16,12 +16,22 @@
 </head>
 <body>
 
+  <!-- Overlay pour mobile -->
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <!-- Header mobile -->
+  <header class="mobile-header">
+    <button id="btn-toggle-sidebar" class="btn-icon" aria-label="Menu">☰</button>
+    <span class="mobile-title">Révisions</span>
+    <button id="btn-toggle-theme-mobile" class="btn-icon" title="Changer le thème">🌙</button>
+  </header>
+
   <!-- ========================================== -->
   <!-- SOMMAIRE / SIDEBAR FIXE                   -->
   <!-- ========================================== -->
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-header">
-      <h2>📚 Révisions</h2>
+      <h2>Révisions</h2>
       <button id="btn-toggle-theme" class="btn-icon" title="Changer le thème">🌙</button>
     </div>
 
@@ -30,6 +40,13 @@
       <span id="sync-status" class="sync-status offline">Hors-ligne (Local)</span>
       <span id="save-indicator" class="save-indicator hidden">✔ Sauvegardé</span>
     </div>
+
+    <!-- Navigation principale -->
+    <nav class="sidebar-nav">
+      <button id="nav-home" class="nav-item active">🏠 Accueil</button>
+      <button id="nav-timetable" class="nav-item">📅 Emploi du temps</button>
+      <button id="nav-homework" class="nav-item">📝 Devoirs</button>
+    </nav>
 
     <!-- Liste des matières -->
     <div class="sidebar-section">
@@ -44,7 +61,7 @@
 
     <!-- Authentification Cloud -->
     <div class="sidebar-footer">
-      <button id="btn-auth-modal" class="btn btn-secondary full-width">🔐 Connexion / Synchro</button>
+      <button id="btn-auth-modal" class="btn btn-secondary full-width">Connexion / Synchro</button>
       <button id="btn-logout" class="btn btn-danger full-width hidden" style="margin-top: 8px;">Déconnexion</button>
     </div>
   </aside>
@@ -60,40 +77,103 @@
     <!-- VUE 1 : ACCUEIL -->
     <section id="view-home" class="view">
       <div class="welcome-card">
-        <h1>Bienvenue dans votre espace de révision !</h1>
-        <p>Sélectionnez une matière dans le sommaire à gauche ou créez-en une nouvelle pour commencer à réviser.</p>
+        <h1>Espace de révision</h1>
+        <p>Sélectionnez une option dans le menu ou une matière pour commencer.</p>
+      </div>
+
+      <!-- Section Prochains Devoirs -->
+      <div class="home-section">
+        <h2>Prochains devoirs à faire</h2>
+        <div id="upcoming-homework-list" class="homework-cards-list">
+          <!-- Généré dynamiquement -->
+        </div>
       </div>
     </section>
 
-    <!-- VUE 2 : MATIÈRE (LISTE DES CHAPITRES) -->
+    <!-- VUE 2 : EMPLOI DU TEMPS -->
+    <section id="view-timetable" class="view hidden">
+      <div class="view-header">
+        <h1>Emploi du temps</h1>
+        <div class="actions">
+          <button id="btn-config-timetable" class="btn btn-secondary">Paramètres EDT</button>
+        </div>
+      </div>
+
+      <!-- Contrôles de semaine -->
+      <div class="timetable-controls">
+        <label for="select-week">Semaine actuelle :</label>
+        <select id="select-week" class="form-select"></select>
+      </div>
+
+      <!-- Tableau Emploi du temps -->
+      <div class="timetable-wrapper">
+        <table class="timetable" id="timetable-grid">
+          <!-- Généré par JS -->
+        </table>
+      </div>
+    </section>
+
+    <!-- VUE 3 : DEVOIRS -->
+    <section id="view-homework" class="view hidden">
+      <div class="view-header">
+        <h1>Gestion des Devoirs</h1>
+        <button id="btn-add-homework" class="btn btn-primary">+ Nouveau devoir</button>
+      </div>
+
+      <div class="homework-container">
+        <!-- Calendrier -->
+        <div class="calendar-card">
+          <div class="calendar-header">
+            <button id="cal-prev" class="btn-icon">‹</button>
+            <span id="cal-month-year"></span>
+            <button id="cal-next" class="btn-icon">›</button>
+          </div>
+          <div class="calendar-days-header">
+            <span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span>
+          </div>
+          <div id="calendar-days" class="calendar-days-grid"></div>
+        </div>
+
+        <!-- Liste des devoirs du jour / globaux -->
+        <div class="homework-list-card">
+          <h3 id="selected-date-title">Tous les devoirs à venir</h3>
+          <div id="homework-items-list" class="homework-items-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VUE 4 : MATIÈRE (LISTE DES CHAPITRES) -->
     <section id="view-subject" class="view hidden">
       <div class="view-header">
-        <h1 id="subject-title">Titre Matière</h1>
+        <div class="subject-header-title">
+          <span id="subject-color-badge" class="color-badge"></span>
+          <h1 id="subject-title">Titre Matière</h1>
+        </div>
         <div class="actions">
-          <button id="btn-rename-subject" class="btn btn-secondary">Reno. Matière</button>
+          <button id="btn-edit-subject-color" class="btn btn-secondary">Couleur</button>
+          <button id="btn-rename-subject" class="btn btn-secondary">Renommer</button>
           <button id="btn-delete-subject" class="btn btn-danger">Supprimer</button>
           <button id="btn-add-chapter" class="btn btn-primary">+ Nouveau chapitre</button>
         </div>
       </div>
       <div id="chapters-grid" class="chapters-grid">
-        <!-- Cartes des chapitres insérées dynamiquement -->
+        <!-- Cartes des chapitres -->
       </div>
     </section>
 
-    <!-- VUE 3 : LEÇON & ÉDITEUR -->
+    <!-- VUE 5 : LEÇON & ÉDITEUR -->
     <section id="view-lesson" class="view hidden">
       <div class="view-header">
         <button id="btn-back-to-subject" class="btn btn-secondary">← Retour</button>
         <div class="actions">
-          <button id="btn-magic-highlight" class="btn btn-magic">✨ Surlignage Magique</button>
-          <button id="btn-start-quiz" class="btn btn-accent">🧠 Lancer un Quiz</button>
+          <button id="btn-magic-highlight" class="btn btn-magic">Surlignage Magique</button>
+          <button id="btn-start-quiz" class="btn btn-accent">Lancer un Quiz</button>
           <button id="btn-delete-chapter" class="btn btn-danger">Supprimer</button>
         </div>
       </div>
 
       <h1 id="chapter-title" contenteditable="true" class="editable-title">Titre du chapitre</h1>
 
-      <!-- Barre d'outils de l'éditeur -->
       <div class="editor-toolbar">
         <button class="tool-btn" data-cmd="bold"><b>B</b></button>
         <button class="tool-btn" data-cmd="italic"><i>I</i></button>
@@ -103,11 +183,10 @@
         <button class="tool-btn" data-cmd="formatBlock" data-val="H3">H3</button>
       </div>
 
-      <!-- Zone d'édition du cours -->
       <div id="editor" class="editor" contenteditable="true" placeholder="Écrivez ou collez votre cours ici..."></div>
     </section>
 
-    <!-- VUE 4 : QUIZ -->
+    <!-- VUE 6 : QUIZ -->
     <section id="view-quiz" class="view hidden">
       <div class="view-header">
         <button id="btn-exit-quiz" class="btn btn-secondary">← Quitter le Quiz</button>
@@ -120,20 +199,96 @@
   </main>
 
   <!-- ========================================== -->
-  <!-- POPOVER ANNOTATION (SURLIGNAGE MAGIQUE)    -->
+  <!-- MODALES DE CONFIGURATION ET D'ÉDITION      -->
   <!-- ========================================== -->
-  <div id="annotation-popover" class="annotation-popover hidden">
-    <h4>Ajouter une note de révision</h4>
-    <textarea id="annotation-input" placeholder="Explication ou réponse à la question du quiz..."></textarea>
-    <div class="popover-actions">
-      <button id="btn-save-annotation" class="btn btn-primary btn-small">Enregistrer</button>
-      <button id="btn-remove-highlight" class="btn btn-danger btn-small">Supprimer le surlignage</button>
+
+  <!-- MODALE CREATION/EDIT DEVOIR -->
+  <div id="modal-homework" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Ajouter un devoir</h3>
+        <button class="btn-icon btn-close-modal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="hw-date">Date de rendu :</label>
+          <input type="date" id="hw-date" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label for="hw-subject">Matière :</label>
+          <select id="hw-subject" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label for="hw-description">Description :</label>
+          <textarea id="hw-description" class="form-input" rows="3" placeholder="Exercices, révisions..."></textarea>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-save-homework" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- ========================================== -->
-  <!-- MODALE AUTHENTIFICATION                    -->
-  <!-- ========================================== -->
+  <!-- MODALE CREATION/EDIT CRENEAU EDT -->
+  <div id="modal-slot" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-slot-title">Modifier le créneau</h3>
+        <button class="btn-icon btn-close-modal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="slot-subject">Matière :</label>
+          <select id="slot-subject" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label for="slot-room">Salle :</label>
+          <input type="text" id="slot-room" class="form-input" placeholder="Ex: B201">
+        </div>
+        <div class="form-group">
+          <label for="slot-teacher">Professeur :</label>
+          <input type="text" id="slot-teacher" class="form-input" placeholder="Ex: M. Dupont">
+        </div>
+        <div class="modal-actions">
+          <button id="btn-delete-slot" class="btn btn-danger">Effacer</button>
+          <button id="btn-save-slot" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODALE PARAMETRES EDT (Semaines / Horaires) -->
+  <div id="modal-timetable-config" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Configuration Emploi du Temps</h3>
+        <button class="btn-icon btn-close-modal">×</button>
+      </div>
+      <div class="modal-body">
+        <h4>Noms des semaines (séparés par des virgules)</h4>
+        <input type="text" id="cfg-weeks" class="form-input" placeholder="Semaine A, Semaine B">
+        
+        <h4 style="margin-top:15px;">Horaires (ex: 8h-9h, 9h-10h, un par ligne)</h4>
+        <textarea id="cfg-hours" class="form-input" rows="5"></textarea>
+
+        <div class="modal-actions" style="margin-top:15px;">
+          <button id="btn-save-timetable-config" class="btn btn-primary">Valider</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- POPOVER ANNOTATION (SURLIGNAGE MAGIQUE) -->
+  <div id="annotation-popover" class="annotation-popover hidden">
+    <h4>Note de révision</h4>
+    <textarea id="annotation-input" placeholder="Explication ou réponse au quiz..."></textarea>
+    <div class="popover-actions">
+      <button id="btn-save-annotation" class="btn btn-primary btn-small">Enregistrer</button>
+      <button id="btn-remove-highlight" class="btn btn-danger btn-small">Supprimer</button>
+    </div>
+  </div>
+
+  <!-- MODALE AUTHENTIFICATION -->
   <div id="auth-modal" class="modal-backdrop hidden">
     <div class="modal">
       <div class="modal-header">
@@ -143,11 +298,11 @@
       <div class="modal-body">
         <div class="form-group">
           <label for="auth-email">Adresse e-mail :</label>
-          <input type="email" id="auth-email" placeholder="votre@email.com" required>
+          <input type="email" id="auth-email" class="form-input" placeholder="votre@email.com" required>
         </div>
         <div class="form-group">
           <label for="auth-password">Mot de passe :</label>
-          <input type="password" id="auth-password" placeholder="••••••••" required>
+          <input type="password" id="auth-password" class="form-input" placeholder="••••••••" required>
         </div>
         <div id="auth-message" class="auth-message"></div>
         <div class="modal-actions">
