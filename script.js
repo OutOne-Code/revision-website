@@ -1,10 +1,9 @@
 /* --- CONFIGURATION SUPABASE --- */
 const SUPABASE_URL = "https://lhbpsrtkffqutexfyhol.supabase.co"; 
-const SUPABASE_ANON_KEY = "sb_publishable_6RKfpvZs2FjupZ-4DZJapg_ckgjxnrC"; // Votre clé anon complète
+const SUPABASE_ANON_KEY = "sb_publishable_6RKfpvZs2FjupZ-4DZJapg_ckgjxnrC";
 
 let supabaseClient = null;
 
-// Initialisation sécurisée du client Supabase
 if (window.supabase && typeof window.supabase.createClient === 'function') {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
@@ -12,12 +11,18 @@ if (window.supabase && typeof window.supabase.createClient === 'function') {
 /* --- ÉTAT GLOBAL DE L'APPLICATION --- */
 let appData = {
   subjects: [],
+  weeks: ["Semaine A", "Semaine B"],
+  hours: ["8h00 - 9h00", "9h00 - 10h00", "10h15 - 11h15", "11h15 - 12h15", "14h00 - 15h00", "15h00 - 16h00"],
+  timetable: {}, // structure : { weekIndex: { dayIndex: { hourIndex: { subjectId, room, teacher } } } }
+  homeworks: [], // structure : [ { id, date: "YYYY-MM-DD", subjectId, description, done: false } ]
   user: null
 };
 
 let currentSubjectId = null;
 let currentChapterId = null;
 let activeHighlightNode = null;
+let currentCalendarDate = new Date();
+let selectedSlotTarget = null; // { week, day, hour }
 
 /* --- INITIALISATION --- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   setupEventListeners();
   renderSidebar();
+  renderHome();
   checkAuth();
 });
 
@@ -33,7 +39,8 @@ function loadLocalData() {
   const saved = localStorage.getItem('revision_app_data');
   if (saved) {
     try { 
-      appData = JSON.parse(saved); 
+      const parsed = JSON.parse(saved);
+      appData = { ...appData, ...parsed };
     } catch(e) { 
       console.error("Erreur lecture localStorage", e); 
     }
@@ -58,6 +65,8 @@ function showSaveIndicator() {
 function switchView(viewName) {
   const views = {
     home: document.getElementById('view-home'),
+    timetable: document.getElementById('view-timetable'),
+    homework: document.getElementById('view-homework'),
     subject: document.getElementById('view-subject'),
     lesson: document.getElementById('view-lesson'),
     quiz: document.getElementById('view-quiz')
@@ -67,9 +76,14 @@ function switchView(viewName) {
     if (views[v]) views[v].classList.add('hidden');
   });
 
+  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+
   if (views[viewName]) {
     views[viewName].classList.remove('hidden');
   }
+
+  // Fermer la sidebar en mobile
+  closeMobileSidebar();
 }
 
 function updateBreadcrumb(text) {
@@ -77,7 +91,7 @@ function updateBreadcrumb(text) {
   if (breadcrumb) breadcrumb.textContent = text;
 }
 
-/* --- GESTION MATIÈRES & CHAPITRES --- */
+/* --- SIDEBAR & VUES PRINCIPALES --- */
 function renderSidebar() {
   const subjectsListEl = document.getElementById('subjects-list');
   if (!subjectsListEl) return;
@@ -86,12 +100,315 @@ function renderSidebar() {
   appData.subjects.forEach(subject => {
     const el = document.createElement('div');
     el.className = `subject-item ${subject.id === currentSubjectId ? 'active' : ''}`;
-    el.textContent = subject.name;
+    
+    const badge = document.createElement('span');
+    badge.className = 'color-badge';
+    badge.style.backgroundColor = subject.color || '#4f46e5';
+
+    const text = document.createElement('span');
+    text.textContent = subject.name;
+
+    el.appendChild(badge);
+    el.appendChild(text);
+
     el.onclick = () => openSubject(subject.id);
     subjectsListEl.appendChild(el);
   });
 }
 
+function renderHome() {
+  updateBreadcrumb("Accueil");
+  const listEl = document.getElementById('upcoming-homework-list');
+  if (!listEl) return;
+
+  listEl.innerHTML = '';
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const upcoming = appData.homeworks
+    .filter(h => h.date >= todayStr && !h.done)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 5);
+
+  if (upcoming.length === 0) {
+    listEl.innerHTML = '<p class="text-muted">Aucun devoir à venir. Bon travail !</p>';
+    return;
+  }
+
+  upcoming.forEach(hw => {
+    const subject = appData.subjects.find(s => s.id === hw.subjectId);
+    const card = document.createElement('div');
+    card.className = 'homework-card';
+    if (subject) card.style.borderLeft = `5px solid ${subject.color || '#4f46e5'}`;
+
+    card.innerHTML = `
+      <div class="hw-card-header">
+        <strong style="color: ${subject ? subject.color : 'inherit'}">${subject ? subject.name : 'Matière supprimée'}</strong>
+        <span class="hw-card-date">${formatDateFR(hw.date)}</span>
+      </div>
+      <p class="hw-card-desc">${hw.description}</p>
+    `;
+    listEl.appendChild(card);
+  });
+}
+
+/* --- EMPLOI DU TEMPS --- */
+function openTimetable() {
+  switchView('timetable');
+  document.getElementById('nav-timetable').classList.add('active');
+  updateBreadcrumb('Emploi du temps');
+
+  const weekSelect = document.getElementById('select-week');
+  weekSelect.innerHTML = '';
+  appData.weeks.forEach((w, idx) => {
+    const opt = document.createElement('option');
+    opt.value = idx;
+    opt.textContent = w;
+    weekSelect.appendChild(opt);
+  });
+
+  weekSelect.onchange = () => renderTimetableGrid(parseInt(weekSelect.value));
+  renderTimetableGrid(0);
+}
+
+function renderTimetableGrid(weekIdx) {
+  const grid = document.getElementById('timetable-grid');
+  if (!grid) return;
+
+  const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+  
+  let html = `<thead><tr><th>Horaire</th>`;
+  days.forEach(d => html += `<th>${d}</th>`);
+  html += `</tr></thead><tbody>`;
+
+  appData.hours.forEach((hour, hIdx) => {
+    html += `<tr><td class="time-col">${hour}</td>`;
+    days.forEach((day, dIdx) => {
+      const slotData = appData.timetable[weekIdx]?.[dIdx]?.[hIdx];
+      let cellStyle = "";
+      let cellContent = `<span class="empty-slot">+</span>`;
+
+      if (slotData && slotData.subjectId) {
+        const subject = appData.subjects.find(s => s.id === slotData.subjectId);
+        if (subject) {
+          cellStyle = `style="background-color: ${subject.color}22; border-left: 4px solid ${subject.color};"`;
+          cellContent = `
+            <div class="slot-subject-name" style="color:${subject.color}">${subject.name}</div>
+            ${slotData.room ? `<div class="slot-info">📍 ${slotData.room}</div>` : ''}
+            ${slotData.teacher ? `<div class="slot-info">👤 ${slotData.teacher}</div>` : ''}
+          `;
+        }
+      }
+
+      html += `<td ${cellStyle} onclick="openSlotModal(${weekIdx}, ${dIdx}, ${hIdx})">${cellContent}</td>`;
+    });
+    html += `</tr>`;
+  });
+
+  html += `</tbody>`;
+  grid.innerHTML = html;
+}
+
+function openSlotModal(week, day, hour) {
+  selectedSlotTarget = { week, day, hour };
+  const modal = document.getElementById('modal-slot');
+  const subjectSelect = document.getElementById('slot-subject');
+  
+  subjectSelect.innerHTML = '<option value="">-- Aucune matière --</option>';
+  appData.subjects.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    subjectSelect.appendChild(opt);
+  });
+
+  const slotData = appData.timetable[week]?.[day]?.[hour] || {};
+  subjectSelect.value = slotData.subjectId || "";
+  document.getElementById('slot-room').value = slotData.room || "";
+  document.getElementById('slot-teacher').value = slotData.teacher || "";
+
+  modal.classList.remove('hidden');
+}
+
+function saveSlot() {
+  if (!selectedSlotTarget) return;
+  const { week, day, hour } = selectedSlotTarget;
+
+  const subjectId = document.getElementById('slot-subject').value;
+  const room = document.getElementById('slot-room').value.trim();
+  const teacher = document.getElementById('slot-teacher').value.trim();
+
+  if (!appData.timetable[week]) appData.timetable[week] = {};
+  if (!appData.timetable[week][day]) appData.timetable[week][day] = {};
+
+  if (!subjectId) {
+    delete appData.timetable[week][day][hour];
+  } else {
+    appData.timetable[week][day][hour] = { subjectId, room, teacher };
+  }
+
+  saveData();
+  renderTimetableGrid(week);
+  document.getElementById('modal-slot').classList.add('hidden');
+}
+
+/* --- DEVOIRS & CALENDRIER --- */
+function openHomework() {
+  switchView('homework');
+  document.getElementById('nav-homework').classList.add('active');
+  updateBreadcrumb('Devoirs');
+  renderCalendar();
+  renderHomeworkList();
+}
+
+function renderCalendar() {
+  const monthYearEl = document.getElementById('cal-month-year');
+  const daysGrid = document.getElementById('calendar-days');
+  if (!monthYearEl || !daysGrid) return;
+
+  const year = currentCalendarDate.getFullYear();
+  const month = currentCalendarDate.getMonth();
+
+  const monthNames = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+  monthYearEl.textContent = `${monthNames[month]} ${year}`;
+
+  daysGrid.innerHTML = '';
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const adjustedFirstDay = firstDay === 0 ? 6 : firstDay - 1; // Ajuster pour Lundi = 0
+  const totalDays = new Date(year, month + 1, 0).getDate();
+
+  for (let i = 0; i < adjustedFirstDay; i++) {
+    const emptyCell = document.createElement('div');
+    emptyCell.className = 'cal-day empty';
+    daysGrid.appendChild(emptyCell);
+  }
+
+  for (let day = 1; day <= totalDays; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const cell = document.createElement('div');
+    cell.className = 'cal-day';
+    cell.textContent = day;
+
+    // Vérifier les devoirs du jour
+    const dayHws = appData.homeworks.filter(h => h.date === dateStr);
+    if (dayHws.length > 0) {
+      const dotsContainer = document.createElement('div');
+      dotsContainer.className = 'cal-dots';
+      dayHws.forEach(hw => {
+        const subject = appData.subjects.find(s => s.id === hw.subjectId);
+        const dot = document.createElement('span');
+        dot.className = 'cal-dot';
+        dot.style.backgroundColor = subject ? subject.color : '#888';
+        dotsContainer.appendChild(dot);
+      });
+      cell.appendChild(dotsContainer);
+    }
+
+    cell.onclick = () => renderHomeworkList(dateStr);
+    daysGrid.appendChild(cell);
+  }
+}
+
+function renderHomeworkList(filterDate = null) {
+  const container = document.getElementById('homework-items-list');
+  const titleEl = document.getElementById('selected-date-title');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  let list = appData.homeworks;
+  if (filterDate) {
+    titleEl.textContent = `Devoirs pour le ${formatDateFR(filterDate)}`;
+    list = list.filter(h => h.date === filterDate);
+  } else {
+    titleEl.textContent = "Tous les devoirs à venir";
+    const todayStr = new Date().toISOString().split('T')[0];
+    list = list.filter(h => h.date >= todayStr).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  if (list.length === 0) {
+    container.innerHTML = '<p class="text-muted">Aucun devoir enregistré.</p>';
+    return;
+  }
+
+  list.forEach(hw => {
+    const subject = appData.subjects.find(s => s.id === hw.subjectId);
+    const item = document.createElement('div');
+    item.className = `hw-item ${hw.done ? 'done' : ''}`;
+
+    item.innerHTML = `
+      <div class="hw-item-left">
+        <input type="checkbox" ${hw.done ? 'checked' : ''} onchange="toggleHomeworkDone('${hw.id}')">
+        <span class="color-badge" style="background-color: ${subject ? subject.color : '#888'}"></span>
+        <div>
+          <strong>${subject ? subject.name : 'Matière inconnu'}</strong> - <small>${formatDateFR(hw.date)}</small>
+          <p>${hw.description}</p>
+        </div>
+      </div>
+      <button class="btn-icon" onclick="deleteHomework('${hw.id}')">🗑</button>
+    `;
+    container.appendChild(item);
+  });
+}
+
+function toggleHomeworkDone(id) {
+  const hw = appData.homeworks.find(h => h.id === id);
+  if (hw) {
+    hw.done = !hw.done;
+    saveData();
+    renderHomeworkList();
+    renderHome();
+  }
+}
+
+function deleteHomework(id) {
+  appData.homeworks = appData.homeworks.filter(h => h.id !== id);
+  saveData();
+  renderCalendar();
+  renderHomeworkList();
+  renderHome();
+}
+
+function openAddHomeworkModal() {
+  const modal = document.getElementById('modal-homework');
+  const subjectSelect = document.getElementById('hw-subject');
+  
+  subjectSelect.innerHTML = '';
+  appData.subjects.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    subjectSelect.appendChild(opt);
+  });
+
+  document.getElementById('hw-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('hw-description').value = '';
+  modal.classList.remove('hidden');
+}
+
+function saveHomework() {
+  const date = document.getElementById('hw-date').value;
+  const subjectId = document.getElementById('hw-subject').value;
+  const description = document.getElementById('hw-description').value.trim();
+
+  if (!date || !subjectId || !description) return alert("Veuillez remplir tous les champs.");
+
+  appData.homeworks.push({
+    id: Date.now().toString(),
+    date,
+    subjectId,
+    description,
+    done: false
+  });
+
+  saveData();
+  document.getElementById('modal-homework').classList.add('hidden');
+  renderCalendar();
+  renderHomeworkList();
+  renderHome();
+}
+
+/* --- GESTION MATIÈRES & CHAPITRES --- */
 function openSubject(subjectId) {
   currentSubjectId = subjectId;
   currentChapterId = null;
@@ -101,7 +418,10 @@ function openSubject(subjectId) {
   if (!subject) return;
 
   const subjectTitle = document.getElementById('subject-title');
+  const badge = document.getElementById('subject-color-badge');
+
   if (subjectTitle) subjectTitle.textContent = subject.name;
+  if (badge) badge.style.backgroundColor = subject.color || '#4f46e5';
 
   updateBreadcrumb(`Matière > ${subject.name}`);
   renderChapters();
@@ -151,7 +471,71 @@ function openChapter(chapterId) {
 function setupEventListeners() {
   // Thème
   const btnToggleTheme = document.getElementById('btn-toggle-theme');
+  const btnToggleThemeMobile = document.getElementById('btn-toggle-theme-mobile');
   if (btnToggleTheme) btnToggleTheme.onclick = toggleTheme;
+  if (btnToggleThemeMobile) btnToggleThemeMobile.onclick = toggleTheme;
+
+  // Sidebar Mobile
+  const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (btnToggleSidebar) btnToggleSidebar.onclick = toggleMobileSidebar;
+  if (overlay) overlay.onclick = closeMobileSidebar;
+
+  // Navigation principaux
+  document.getElementById('nav-home').onclick = () => { switchView('home'); renderHome(); };
+  document.getElementById('nav-timetable').onclick = openTimetable;
+  document.getElementById('nav-homework').onclick = openHomework;
+
+  // Modales d'annulation / fermeture
+  document.querySelectorAll('.btn-close-modal').forEach(btn => {
+    btn.onclick = () => {
+      btn.closest('.modal-backdrop').classList.add('hidden');
+    };
+  });
+
+  // Emploi du Temps
+  document.getElementById('btn-config-timetable').onclick = () => {
+    document.getElementById('cfg-weeks').value = appData.weeks.join(', ');
+    document.getElementById('cfg-hours').value = appData.hours.join('\n');
+    document.getElementById('modal-timetable-config').classList.remove('hidden');
+  };
+
+  document.getElementById('btn-save-timetable-config').onclick = () => {
+    const weeksInput = document.getElementById('cfg-weeks').value;
+    const hoursInput = document.getElementById('cfg-hours').value;
+
+    appData.weeks = weeksInput.split(',').map(w => w.trim()).filter(Boolean);
+    appData.hours = hoursInput.split('\n').map(h => h.trim()).filter(Boolean);
+
+    saveData();
+    document.getElementById('modal-timetable-config').classList.add('hidden');
+    openTimetable();
+  };
+
+  document.getElementById('btn-save-slot').onclick = saveSlot;
+  document.getElementById('btn-delete-slot').onclick = () => {
+    if (selectedSlotTarget) {
+      const { week, day, hour } = selectedSlotTarget;
+      if (appData.timetable[week]?.[day]?.[hour]) {
+        delete appData.timetable[week][day][hour];
+        saveData();
+        renderTimetableGrid(week);
+      }
+    }
+    document.getElementById('modal-slot').classList.add('hidden');
+  };
+
+  // Devoirs & Calendrier Navigation
+  document.getElementById('cal-prev').onclick = () => {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+    renderCalendar();
+  };
+  document.getElementById('cal-next').onclick = () => {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+    renderCalendar();
+  };
+  document.getElementById('btn-add-homework').onclick = openAddHomeworkModal;
+  document.getElementById('btn-save-homework').onclick = saveHomework;
 
   // Matières
   const btnAddSubject = document.getElementById('btn-add-subject');
@@ -159,11 +543,27 @@ function setupEventListeners() {
     btnAddSubject.onclick = () => {
       const name = prompt("Nom de la matière :");
       if (!name || !name.trim()) return;
-      const newSubject = { id: Date.now().toString(), name: name.trim(), chapters: [] };
+      const color = prompt("Code couleur HEX (ex: #4f46e5) :", "#4f46e5") || "#4f46e5";
+      const newSubject = { id: Date.now().toString(), name: name.trim(), color, chapters: [] };
       appData.subjects.push(newSubject);
       saveData();
       renderSidebar();
       openSubject(newSubject.id);
+    };
+  }
+
+  const btnEditSubjectColor = document.getElementById('btn-edit-subject-color');
+  if (btnEditSubjectColor) {
+    btnEditSubjectColor.onclick = () => {
+      const subject = appData.subjects.find(s => s.id === currentSubjectId);
+      if (!subject) return;
+      const color = prompt("Nouvelle couleur HEX :", subject.color || "#4f46e5");
+      if (color) {
+        subject.color = color;
+        saveData();
+        renderSidebar();
+        openSubject(subject.id);
+      }
     };
   }
 
@@ -190,8 +590,8 @@ function setupEventListeners() {
         currentSubjectId = null;
         saveData();
         renderSidebar();
-        updateBreadcrumb('Accueil');
         switchView('home');
+        renderHome();
       }
     };
   }
@@ -256,7 +656,7 @@ function setupEventListeners() {
     };
   }
 
-  // Surlignage Magique & Popover
+  // Surlignage Magique
   const btnMagic = document.getElementById('btn-magic-highlight');
   if (btnMagic) btnMagic.onclick = applyMagicHighlight;
 
@@ -380,7 +780,7 @@ function removeHighlight() {
   if (popover) popover.classList.add('hidden');
 }
 
-/* --- GENERATION DE QUIZ --- */
+/* --- QUIZ --- */
 function startQuiz() {
   const subject = appData.subjects.find(s => s.id === currentSubjectId);
   if (!subject) return;
@@ -425,7 +825,7 @@ function generateQuiz(annotations) {
         <div class="quiz-options">
           <button class="btn btn-secondary" id="btn-reveal">Afficher la réponse / Explication</button>
         </div>
-        <div id="quiz-answer" class="hidden" style="margin-top: 15px; padding: 15px; background: var(--bg-sidebar); border-radius: 6px;">
+        <div id="quiz-answer" class="hidden" style="margin-top: 15px; padding: 15px; background: var(--bg-sidebar); border-radius: 8px;">
           <p><strong>Explication :</strong> ${item.note || "Aucune note enregistrée."}</p>
           <p style="margin-top: 15px;">Avez-vous eu juste ?</p>
           <div style="display:flex; gap:10px; margin-top:10px; justify-content:center;">
@@ -448,17 +848,51 @@ function generateQuiz(annotations) {
   showQuestion();
 }
 
-/* --- THÈME --- */
+/* --- THÈME & MOBILE --- */
 function initTheme() {
   const theme = localStorage.getItem('theme') || 'light';
-  document.documentElement.setAttribute('data-theme', theme);
+  applyTheme(theme);
 }
 
 function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme');
   const target = current === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', target);
-  localStorage.setItem('theme', target);
+  applyTheme(target);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+
+  const btnTheme = document.getElementById('btn-toggle-theme');
+  const btnThemeMobile = document.getElementById('btn-toggle-theme-mobile');
+
+  // Thème clair => bouton Lune (pour passer en sombre)
+  // Thème sombre => bouton Soleil (pour passer en clair)
+  const icon = theme === 'light' ? '🌙' : '☀️';
+  if (btnTheme) btnTheme.textContent = icon;
+  if (btnThemeMobile) btnThemeMobile.textContent = icon;
+}
+
+function toggleMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  sidebar.classList.toggle('mobile-open');
+  overlay.classList.toggle('active');
+}
+
+function closeMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) sidebar.classList.remove('mobile-open');
+  if (overlay) overlay.classList.remove('active');
+}
+
+/* --- UTILITAIRES --- */
+function formatDateFR(dateStr) {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-');
+  return `${day}/${month}/${year}`;
 }
 
 /* --- SUPABASE & AUTHENTIFICATION --- */
@@ -468,7 +902,7 @@ async function syncToCloud() {
   try {
     await supabaseClient.from('user_revisions').upsert({
       user_id: appData.user.id,
-      content: appData.subjects,
+      content: appData,
       updated_at: new Date()
     });
   } catch(e) {
@@ -496,9 +930,10 @@ async function loadCloudData() {
   
   const { data, error } = await supabaseClient.from('user_revisions').select('content').eq('user_id', appData.user.id).single();
   if (data && data.content) {
-    appData.subjects = data.content;
+    appData = { ...appData, ...data.content };
     localStorage.setItem('revision_app_data', JSON.stringify(appData));
     renderSidebar();
+    renderHome();
   }
 }
 
@@ -517,7 +952,7 @@ async function handleLogin() {
 
   if (error) {
     if (msgEl) {
-      msgEl.style.color = "red";
+      msgEl.style.color = "var(--danger)";
       msgEl.textContent = error.message;
     }
   } else {
@@ -543,12 +978,12 @@ async function handleSignup() {
 
   if (error) {
     if (msgEl) {
-      msgEl.style.color = "red";
+      msgEl.style.color = "var(--danger)";
       msgEl.textContent = error.message;
     }
   } else {
     if (msgEl) {
-      msgEl.style.color = "green";
+      msgEl.style.color = "var(--accent)";
       msgEl.textContent = "Compte créé ! Vérifiez votre boîte mail pour valider l'inscription.";
     }
   }
