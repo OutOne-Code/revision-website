@@ -43,8 +43,12 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--app-font, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   background-color: var(--bg-main);
+  background-image: var(--app-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
   color: var(--text-main);
   display: flex;
   min-height: 100vh;
@@ -105,7 +109,7 @@ body {
   border: 1px solid var(--border-color);
 }
 
-.sync-status.online { color: var(--accent); }
+.sync-status.online { color: #10b981; }
 .sync-status.offline { color: var(--text-muted); }
 .save-indicator { color: var(--accent); font-weight: 600; }
 
@@ -702,4 +706,284 @@ mark.magic-highlight {
   .homework-container {
     grid-template-columns: 1fr;
   }
+}
+
+/* ==========================================================
+   AJOUTS : POLICE, FOND D'ÉCRAN, PALETTE COULEURS, MOBILE
+   ========================================================== */
+
+/* La police choisie s'applique partout */
+body, button, input, select, textarea {
+  font-family: var(--app-font, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+}
+
+/* Lisibilité quand un fond d'écran image est actif */
+body.has-bg-image .sidebar,
+body.has-bg-image .mobile-header {
+  background-color: color-mix(in srgb, var(--bg-sidebar) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+body.has-bg-image .welcome-card,
+body.has-bg-image .calendar-card,
+body.has-bg-image .homework-list-card,
+body.has-bg-image .stat-card,
+body.has-bg-image .chart-card,
+body.has-bg-image .grades-list-card,
+body.has-bg-image .settings-card,
+body.has-bg-image .chapter-card,
+body.has-bg-image .editor,
+body.has-bg-image .timetable-wrapper {
+  background-color: color-mix(in srgb, var(--bg-card) 90%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+/* Le bouton de déconnexion et l'indicateur restent neutres
+   (non impactés par les couleurs personnalisées) */
+#btn-logout {
+  background: #ef4444 !important;
+  color: #ffffff !important;
+}
+#btn-logout:hover { background: #dc2626 !important; }
+
+.sync-status.online { color: #10b981 !important; }
+.sync-status.offline { color: var(--text-muted) !important; }
+.save-indicator { color: #10b981 !important; }
+
+/* --- SÉLECTEUR DE POLICE --- */
+.font-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.font-option {
+  padding: 12px;
+  border-radius: 12px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-main);
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+  font-size: 1rem;
+}
+
+.font-option small {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-family: system-ui, sans-serif;
+}
+
+.font-option.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+/* --- FONDS D'ÉCRAN --- */
+.bg-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 12px;
+}
+
+.bg-option {
+  height: 70px;
+  border-radius: 12px;
+  border: 2px solid var(--border-color);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.bg-option span {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  font-size: 0.7rem;
+  padding: 3px;
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  text-align: center;
+}
+
+.bg-option.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.settings-row .form-input { flex: 1; min-width: 180px; }
+
+.settings-card + .settings-card { margin-top: 20px; }
+
+/* --- PALETTE DE COULEURS (MATIÈRES) --- */
+.color-palette {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.color-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+
+.color-swatch.active::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+.color-swatch.active {
+  border-color: var(--text-main);
+  transform: scale(1.06);
+}
+
+.color-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-custom-row .form-color-picker { width: 60px; height: 42px; padding: 3px; }
+
+.color-preview-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.color-preview-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+}
+
+/* --- MOBILE : BOUTONS ET ONGLETS MATIÈRES --- */
+@media (max-width: 768px) {
+  .mobile-header {
+    height: 62px;
+    border-radius: 0 0 18px 18px;
+    box-shadow: var(--shadow);
+  }
+
+  .btn-icon {
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: var(--secondary);
+  }
+
+  .mobile-header .btn-icon { background: var(--secondary); }
+
+  /* Boutons plus propres et confortables au doigt */
+  .btn {
+    padding: 13px 18px;
+    border-radius: 14px;
+    font-size: 0.95rem;
+    min-height: 46px;
+    box-shadow: var(--shadow);
+  }
+
+  .view-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .view-header h1 { font-size: 1.35rem; }
+
+  .actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    width: 100%;
+  }
+
+  .actions .btn { width: 100%; }
+  .actions .btn:only-child { grid-column: span 2; }
+
+  .modal-actions { flex-direction: column-reverse; }
+  .modal-actions .btn { width: 100%; }
+
+  .tool-btn { padding: 10px 14px; border-radius: 10px; min-height: 42px; }
+  .editor-toolbar { flex-wrap: wrap; }
+
+  /* Onglets matières dans le menu */
+  .subject-item {
+    padding: 14px 14px;
+    border-radius: 14px;
+    font-size: 1rem;
+    background: var(--bg-main);
+    border: 1px solid var(--border-color);
+    gap: 12px;
+  }
+
+  .subject-item .color-badge {
+    width: 16px;
+    height: 16px;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 8%, transparent);
+  }
+
+  .subject-item.active {
+    background: var(--secondary);
+    border-color: var(--primary);
+  }
+
+  .nav-item { padding: 14px; font-size: 1rem; border-radius: 14px; }
+
+  .sidebar { width: 84vw; max-width: 320px; padding: 20px; }
+
+  /* Vue matière : en-tête et cartes chapitres */
+  .subject-header-title { gap: 10px; }
+  .subject-header-title .color-badge { width: 16px; height: 16px; }
+
+  .chapters-grid { grid-template-columns: 1fr; gap: 12px; }
+
+  .chapter-card {
+    padding: 18px;
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+  }
+
+  .chapter-card h3 { font-size: 1.05rem; }
+
+  .color-palette { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); }
+  .font-options { grid-template-columns: 1fr 1fr; }
+  .bg-options { grid-template-columns: 1fr 1fr; }
+
+  .timetable-controls { flex-direction: column; align-items: stretch; }
+  .timetable-controls select { max-width: none; }
 }
