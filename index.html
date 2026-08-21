@@ -234,9 +234,9 @@
       </div>
 
       <div class="settings-card">
-        <h3>Apparence</h3>
-        <p class="text-muted" style="margin-bottom: 15px;">Personnalisez les couleurs principales de l'application.</p>
-        
+        <h3>Couleurs principales</h3>
+        <p class="text-muted" style="margin-bottom: 15px;">Ces couleurs sont appliquées à tout le site (l'indicateur de connexion, le bouton de déconnexion et les couleurs des matières restent inchangés).</p>
+
         <div class="form-group">
           <label for="color-primary">Couleur Principale :</label>
           <input type="color" id="color-primary" class="form-color-picker" value="#4f46e5">
@@ -248,6 +248,38 @@
         </div>
 
         <button id="btn-reset-theme-colors" class="btn btn-secondary" style="margin-top: 10px;">Réinitialiser les couleurs</button>
+      </div>
+
+      <div class="settings-card" style="margin-top:20px;">
+        <h3>Police d'écriture</h3>
+        <p class="text-muted" style="margin-bottom: 15px;">Choisissez la police utilisée dans toute l'application.</p>
+        <div id="font-options" class="font-options">
+          <!-- Généré dynamiquement -->
+        </div>
+      </div>
+
+      <div class="settings-card" style="margin-top:20px;">
+        <h3>Fond d'écran</h3>
+        <p class="text-muted" style="margin-bottom: 15px;">Choisissez un fond prédéfini, une couleur unie ou votre propre image.</p>
+        <div id="bg-options" class="bg-options">
+          <!-- Généré dynamiquement -->
+        </div>
+
+        <div class="settings-row">
+          <label for="bg-solid-color">Couleur unie :</label>
+          <input type="color" id="bg-solid-color" class="form-color-picker" style="width:70px;height:44px;" value="#f4f6f9">
+        </div>
+
+        <div class="settings-row">
+          <input type="url" id="bg-image-url" class="form-input" placeholder="Lien d'une image (https://...)">
+          <button id="btn-apply-bg-url" class="btn btn-primary">Appliquer</button>
+        </div>
+
+        <div class="settings-row">
+          <label for="bg-image-file" class="btn btn-secondary" style="display:inline-block;">Importer une image</label>
+          <input type="file" id="bg-image-file" accept="image/*" class="hidden">
+          <button id="btn-reset-bg" class="btn btn-secondary">Aucun fond</button>
+        </div>
       </div>
     </section>
 
@@ -375,6 +407,32 @@
     <div class="popover-actions">
       <button id="btn-save-annotation" class="btn btn-primary btn-small">Enregistrer</button>
       <button id="btn-remove-highlight" class="btn btn-danger btn-small">Supprimer</button>
+    </div>
+  </div>
+
+  <!-- MODALE SÉLECTION DE COULEUR (MATIÈRES) -->
+  <div id="modal-color" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-color-title">Couleur de la matière</h3>
+        <button class="btn-icon btn-close-modal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="color-palette" class="color-palette">
+          <!-- Pastilles générées dynamiquement -->
+        </div>
+        <div class="color-custom-row">
+          <label for="color-custom">Couleur personnalisée :</label>
+          <input type="color" id="color-custom" class="form-color-picker" value="#4f46e5">
+        </div>
+        <div class="color-preview-line">
+          <span class="color-preview-dot" id="color-preview-dot"></span>
+          <span id="color-preview-name">Aperçu</span>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-confirm-color" class="btn btn-primary">Valider</button>
+        </div>
+      </div>
     </div>
   </div>
 
