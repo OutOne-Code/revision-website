@@ -1018,3 +1018,169 @@ function updateAuthUI(isLoggedIn) {
     }
   }
 }
+// --- GESTION DES DONNÉES DE NOTES ---
+let notesData = JSON.parse(localStorage.getItem('user_notes')) || [
+  { subject: 'Mathématiques', color: '#4a90e2', note: 14, coef: 2, period: 'T1' },
+  { subject: 'Mathématiques', color: '#4a90e2', note: 16, coef: 1, period: 'T1' },
+  { subject: 'Français', color: '#e74c3c', note: 12, coef: 1, period: 'T1' },
+  { subject: 'Histoire', color: '#2ecc71', note: 15, coef: 1, period: 'T1' }
+];
+
+let chartInstance = null;
+
+// --- NAVIGATION ONGLETS ---
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+  
+  document.getElementById(`tab-${tabId}`).classList.add('active');
+  event.target.classList.add('active');
+  
+  if (tabId === 'notes' && chartInstance) {
+    chartInstance.resize();
+  }
+}
+
+// --- LOGIQUE RÉSULTATS & GRAPHIQUE ---
+function handleAddNote(e) {
+  e.preventDefault();
+  const subject = document.getElementById('subject-input').value;
+  const color = document.getElementById('color-input').value;
+  const note = parseFloat(document.getElementById('note-input').value);
+  const coef = parseFloat(document.getElementById('coef-input').value);
+  const period = document.getElementById('period-select').value;
+
+  notesData.push({ subject, color, note, coef, period });
+  localStorage.setItem('user_notes', JSON.stringify(notesData));
+
+  document.getElementById('add-note-form').reset();
+  updateDashboard();
+}
+
+function updateDashboard() {
+  const currentPeriod = document.getElementById('period-select').value;
+  const periodNotes = notesData.filter(n => n.period === currentPeriod);
+
+  // Groupement par matière
+  const subjectsMap = {};
+  periodNotes.forEach(n => {
+    if (!subjectsMap[n.subject]) {
+      subjectsMap[n.subject] = { totalPoints: 0, totalCoef: 0, color: n.color, notes: [] };
+    }
+    subjectsMap[n.subject].totalPoints += n.note * n.coef;
+    subjectsMap[n.subject].totalCoef += n.coef;
+    subjectsMap[n.subject].notes.push(n.note);
+  });
+
+  // Calcul des moyennes par matière
+  const subjectNames = Object.keys(subjectsMap);
+  const subjectAverages = [];
+  const backgroundColors = [];
+  let overallPoints = 0;
+  let overallCoef = 0;
+
+  subjectNames.forEach(name => {
+    const avg = subjectsMap[name].totalPoints / subjectsMap[name].totalCoef;
+    subjectAverages.push(avg.toFixed(2));
+    backgroundColors.push(subjectsMap[name].color);
+
+    overallPoints += subjectsMap[name].totalPoints;
+    overallCoef += subjectsMap[name].totalCoef;
+  });
+
+  // Moyenne Générale
+  const overallAvg = overallCoef > 0 ? (overallPoints / overallCoef).toFixed(2) : '--';
+  document.getElementById('overall-average').innerText = `${overallAvg} / 20`;
+
+  // Mise à jour de la liste visuelle
+  const listEl = document.getElementById('subjects-list');
+  listEl.innerHTML = '';
+  subjectNames.forEach((name, i) => {
+    const item = document.createElement('div');
+    item.className = 'subject-item';
+    item.style.backgroundColor = backgroundColors[i];
+    item.innerHTML = `${name}<br><small>Moyenne: ${subjectAverages[i]}/20</small>`;
+    listEl.appendChild(item);
+  });
+
+  // Rendu du graphique Chart.js
+  renderChart(subjectNames, subjectAverages, backgroundColors);
+}
+
+function renderChart(labels, data, colors) {
+  const ctx = document.getElementById('resultsChart').getContext('2d');
+  
+  if (chartInstance) {
+    chartInstance.destroy();
+  }
+
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Moyenne par matière',
+        data: data,
+        backgroundColor: colors,
+        borderRadius: parseInt(getComputedStyle(document.documentElement).getPropertyValue('--border-radius')) || 8,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          min: 0,
+          max: 20
+        }
+      }
+    }
+  });
+}
+
+// --- LOGIQUE DE PERSONNALISATION ---
+function updateTheme() {
+  const primary = document.getElementById('theme-color').value;
+  const bg = document.getElementById('bg-color').value;
+  const cardBg = document.getElementById('card-bg').value;
+  const radius = document.getElementById('border-radius').value;
+  const font = document.getElementById('font-family').value;
+
+  document.getElementById('radius-val').innerText = radius;
+
+  const root = document.documentElement;
+  root.style.setProperty('--primary-color', primary);
+  root.style.setProperty('--bg-color', bg);
+  root.style.setProperty('--card-bg', cardBg);
+  root.style.setProperty('--border-radius', `${radius}px`);
+  root.style.setProperty('--font-family', font);
+
+  const themeConfig = { primary, bg, cardBg, radius, font };
+  localStorage.setItem('user_theme', JSON.stringify(themeConfig));
+
+  if (chartInstance) updateDashboard();
+}
+
+function loadTheme() {
+  const saved = JSON.parse(localStorage.getItem('user_theme'));
+  if (!saved) return;
+
+  document.getElementById('theme-color').value = saved.primary;
+  document.getElementById('bg-color').value = saved.bg;
+  document.getElementById('card-bg').value = saved.cardBg;
+  document.getElementById('border-radius').value = saved.radius;
+  document.getElementById('font-family').value = saved.font;
+
+  updateTheme();
+}
+
+function resetTheme() {
+  localStorage.removeItem('user_theme');
+  location.reload();
+}
+
+// Initialisation
+window.onload = () => {
+  loadTheme();
+  updateDashboard();
+};
