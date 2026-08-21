@@ -17,6 +17,7 @@ let appData = {
   homeworks: [], // structure : [ { id, date: "YYYY-MM-DD", subjectId, description, done: false } ]
   grades: [],    // structure : [ { id, title, subjectId, value, coeff, date } ]
   customColors: { primary: "#4f46e5", accent: "#10b981" },
+  appearance: { font: "system", background: { type: "none", value: "" } },
   user: null
 };
 
@@ -32,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadLocalData();
   initTheme();
   applyCustomColors();
+  applyAppearance();
   setupEventListeners();
   renderSidebar();
   renderHome();
@@ -47,6 +49,8 @@ function loadLocalData() {
       appData = { ...appData, ...parsed };
       if (!appData.grades) appData.grades = [];
       if (!appData.customColors) appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
+      if (!appData.appearance) appData.appearance = { font: "system", background: { type: "none", value: "" } };
+      if (!appData.appearance.background) appData.appearance.background = { type: "none", value: "" };
     } catch(e) { 
       console.error("Erreur lecture localStorage", e); 
     }
@@ -593,6 +597,104 @@ function deleteGrade(id) {
 }
 
 /* --- PERSONNALISATION --- */
+const FONT_CHOICES = [
+  { id: "system",    name: "Système",     stack: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
+  { id: "inter",     name: "Moderne",     stack: '"Inter", "Segoe UI", Helvetica, Arial, sans-serif' },
+  { id: "georgia",   name: "Élégante",    stack: 'Georgia, "Times New Roman", serif' },
+  { id: "trebuchet", name: "Arrondie",    stack: '"Trebuchet MS", "Segoe UI", sans-serif' },
+  { id: "verdana",   name: "Lisible",     stack: 'Verdana, Geneva, sans-serif' },
+  { id: "mono",      name: "Monospace",   stack: '"JetBrains Mono", "Courier New", monospace' },
+  { id: "comic",     name: "Manuscrite",  stack: '"Comic Sans MS", "Segoe Print", cursive' }
+];
+
+const BG_PRESETS = [
+  { id: "none",     name: "Aucun",      css: "none" },
+  { id: "sunset",   name: "Coucher",    css: "linear-gradient(135deg, #ff9a9e 0%, #fad0c4 50%, #fbc2eb 100%)" },
+  { id: "ocean",    name: "Océan",      css: "linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)" },
+  { id: "forest",   name: "Forêt",      css: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)" },
+  { id: "night",    name: "Nuit",       css: "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)" },
+  { id: "pastel",   name: "Pastel",     css: "linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%)" },
+  { id: "peach",    name: "Pêche",      css: "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)" },
+  { id: "mesh",     name: "Quadrillé",  css: "repeating-linear-gradient(0deg, rgba(125,125,125,0.12) 0 1px, transparent 1px 40px), repeating-linear-gradient(90deg, rgba(125,125,125,0.12) 0 1px, transparent 1px 40px)" }
+];
+
+function getFontStack(id) {
+  const f = FONT_CHOICES.find(f => f.id === id);
+  return f ? f.stack : FONT_CHOICES[0].stack;
+}
+
+function applyAppearance() {
+  if (!appData.appearance) appData.appearance = { font: "system", background: { type: "none", value: "" } };
+  const root = document.documentElement;
+
+  // Police globale
+  root.style.setProperty('--app-font', getFontStack(appData.appearance.font));
+
+  // Fond d'écran
+  const bg = appData.appearance.background || { type: "none", value: "" };
+  let image = 'none';
+  let solid = null;
+
+  if (bg.type === 'preset') {
+    const preset = BG_PRESETS.find(b => b.id === bg.value);
+    image = preset ? preset.css : 'none';
+  } else if (bg.type === 'image') {
+    image = `linear-gradient(rgba(0,0,0,0.05), rgba(0,0,0,0.05)), url("${bg.value}")`;
+  } else if (bg.type === 'color') {
+    solid = bg.value;
+  }
+
+  root.style.setProperty('--app-bg-image', image);
+  if (solid) {
+    document.body.style.backgroundColor = solid;
+  } else {
+    document.body.style.backgroundColor = '';
+  }
+  document.body.classList.toggle('has-bg-image', image !== 'none');
+}
+
+function renderFontOptions() {
+  const container = document.getElementById('font-options');
+  if (!container) return;
+  container.innerHTML = '';
+  FONT_CHOICES.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = 'font-option' + (appData.appearance.font === f.id ? ' active' : '');
+    btn.style.fontFamily = f.stack;
+    btn.innerHTML = `Aa <small>${f.name}</small>`;
+    btn.onclick = () => {
+      appData.appearance.font = f.id;
+      applyAppearance();
+      saveData();
+      renderFontOptions();
+    };
+    container.appendChild(btn);
+  });
+}
+
+function renderBgOptions() {
+  const container = document.getElementById('bg-options');
+  if (!container) return;
+  container.innerHTML = '';
+  const bg = appData.appearance.background || { type: 'none', value: '' };
+  BG_PRESETS.forEach(preset => {
+    const btn = document.createElement('button');
+    const isActive = (preset.id === 'none' && bg.type === 'none') || (bg.type === 'preset' && bg.value === preset.id);
+    btn.className = 'bg-option' + (isActive ? ' active' : '');
+    btn.style.background = preset.css === 'none' ? 'var(--bg-main)' : preset.css;
+    btn.innerHTML = `<span>${preset.name}</span>`;
+    btn.onclick = () => {
+      appData.appearance.background = preset.id === 'none'
+        ? { type: 'none', value: '' }
+        : { type: 'preset', value: preset.id };
+      applyAppearance();
+      saveData();
+      renderBgOptions();
+    };
+    container.appendChild(btn);
+  });
+}
+
 function openSettings() {
   switchView('settings');
   document.getElementById('nav-settings').classList.add('active');
@@ -600,12 +702,96 @@ function openSettings() {
 
   document.getElementById('color-primary').value = appData.customColors.primary || '#4f46e5';
   document.getElementById('color-accent').value = appData.customColors.accent || '#10b981';
+
+  const bg = appData.appearance.background || { type: 'none', value: '' };
+  const solidInput = document.getElementById('bg-solid-color');
+  if (solidInput && bg.type === 'color') solidInput.value = bg.value;
+  const urlInput = document.getElementById('bg-image-url');
+  if (urlInput) urlInput.value = bg.type === 'image' && !bg.value.startsWith('data:') ? bg.value : '';
+
+  renderFontOptions();
+  renderBgOptions();
 }
 
 function applyCustomColors() {
   if (!appData.customColors) return;
   document.documentElement.style.setProperty('--primary', appData.customColors.primary);
   document.documentElement.style.setProperty('--accent', appData.customColors.accent);
+}
+
+/* --- SÉLECTEUR VISUEL DE COULEURS (MATIÈRES) --- */
+const SUBJECT_COLORS = [
+  { hex: "#ef4444", name: "Rouge" },      { hex: "#f97316", name: "Orange" },
+  { hex: "#f59e0b", name: "Ambre" },      { hex: "#eab308", name: "Jaune" },
+  { hex: "#84cc16", name: "Citron" },     { hex: "#22c55e", name: "Vert" },
+  { hex: "#10b981", name: "Émeraude" },   { hex: "#14b8a6", name: "Turquoise" },
+  { hex: "#06b6d4", name: "Cyan" },       { hex: "#0ea5e9", name: "Bleu ciel" },
+  { hex: "#3b82f6", name: "Bleu" },       { hex: "#4f46e5", name: "Indigo" },
+  { hex: "#8b5cf6", name: "Violet" },     { hex: "#a855f7", name: "Pourpre" },
+  { hex: "#d946ef", name: "Fuchsia" },    { hex: "#ec4899", name: "Rose" },
+  { hex: "#f43f5e", name: "Framboise" },  { hex: "#78716c", name: "Pierre" },
+  { hex: "#64748b", name: "Ardoise" },    { hex: "#0f172a", name: "Nuit" }
+];
+
+let colorPickerCallback = null;
+let colorPickerValue = "#4f46e5";
+
+function openColorPicker(initialColor, onConfirm, title) {
+  colorPickerCallback = onConfirm;
+  colorPickerValue = initialColor || "#4f46e5";
+
+  const modal = document.getElementById('modal-color');
+  if (!modal) { if (onConfirm) onConfirm(colorPickerValue); return; }
+
+  const titleEl = document.getElementById('modal-color-title');
+  if (titleEl) titleEl.textContent = title || "Choisir une couleur";
+
+  renderColorPalette();
+  modal.classList.remove('hidden');
+}
+
+function renderColorPalette() {
+  const palette = document.getElementById('color-palette');
+  if (!palette) return;
+
+  palette.innerHTML = '';
+  SUBJECT_COLORS.forEach(c => {
+    const swatch = document.createElement('button');
+    swatch.className = 'color-swatch' + (c.hex.toLowerCase() === colorPickerValue.toLowerCase() ? ' active' : '');
+    swatch.style.backgroundColor = c.hex;
+    swatch.title = c.name;
+    swatch.setAttribute('aria-label', c.name);
+    swatch.onclick = () => { colorPickerValue = c.hex; renderColorPalette(); };
+    palette.appendChild(swatch);
+  });
+
+  const custom = document.getElementById('color-custom');
+  if (custom) custom.value = colorPickerValue;
+
+  const dot = document.getElementById('color-preview-dot');
+  if (dot) dot.style.backgroundColor = colorPickerValue;
+
+  const nameEl = document.getElementById('color-preview-name');
+  if (nameEl) {
+    const known = SUBJECT_COLORS.find(c => c.hex.toLowerCase() === colorPickerValue.toLowerCase());
+    nameEl.textContent = known ? known.name : "Couleur personnalisée";
+  }
+}
+
+function setupColorPicker() {
+  const custom = document.getElementById('color-custom');
+  if (custom) {
+    custom.oninput = (e) => { colorPickerValue = e.target.value; renderColorPalette(); };
+  }
+
+  const confirmBtn = document.getElementById('btn-confirm-color');
+  if (confirmBtn) {
+    confirmBtn.onclick = () => {
+      document.getElementById('modal-color').classList.add('hidden');
+      if (colorPickerCallback) colorPickerCallback(colorPickerValue);
+      colorPickerCallback = null;
+    };
+  }
 }
 
 /* --- GESTION MATIÈRES & CHAPITRES --- */
@@ -669,6 +855,7 @@ function openChapter(chapterId) {
 
 /* --- LISTENERS INTERFACE --- */
 function setupEventListeners() {
+  setupColorPicker();
   // Thème
   const btnToggleTheme = document.getElementById('btn-toggle-theme');
   const btnToggleThemeMobile = document.getElementById('btn-toggle-theme-mobile');
@@ -756,6 +943,58 @@ function setupEventListeners() {
     saveData();
   };
 
+  const bgSolid = document.getElementById('bg-solid-color');
+  if (bgSolid) {
+    bgSolid.oninput = (e) => {
+      appData.appearance.background = { type: 'color', value: e.target.value };
+      applyAppearance();
+      saveData();
+      renderBgOptions();
+    };
+  }
+
+  const btnApplyBgUrl = document.getElementById('btn-apply-bg-url');
+  if (btnApplyBgUrl) {
+    btnApplyBgUrl.onclick = () => {
+      const url = document.getElementById('bg-image-url').value.trim();
+      if (!url) return;
+      appData.appearance.background = { type: 'image', value: url };
+      applyAppearance();
+      saveData();
+      renderBgOptions();
+    };
+  }
+
+  const bgFile = document.getElementById('bg-image-file');
+  if (bgFile) {
+    bgFile.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (file.size > 2.5 * 1024 * 1024) {
+        alert("Image trop lourde (2,5 Mo max). Utilisez plutôt un lien d'image.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        appData.appearance.background = { type: 'image', value: reader.result };
+        applyAppearance();
+        saveData();
+        renderBgOptions();
+      };
+      reader.readAsDataURL(file);
+    };
+  }
+
+  const btnResetBg = document.getElementById('btn-reset-bg');
+  if (btnResetBg) {
+    btnResetBg.onclick = () => {
+      appData.appearance.background = { type: 'none', value: '' };
+      applyAppearance();
+      saveData();
+      renderBgOptions();
+    };
+  }
+
   document.getElementById('btn-reset-theme-colors').onclick = () => {
     appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
     applyCustomColors();
@@ -769,12 +1008,13 @@ function setupEventListeners() {
     btnAddSubject.onclick = () => {
       const name = prompt("Nom de la matière :");
       if (!name || !name.trim()) return;
-      const color = prompt("Code couleur HEX (ex: #4f46e5) :", "#4f46e5") || "#4f46e5";
-      const newSubject = { id: Date.now().toString(), name: name.trim(), color, chapters: [] };
-      appData.subjects.push(newSubject);
-      saveData();
-      renderSidebar();
-      openSubject(newSubject.id);
+      openColorPicker("#4f46e5", (color) => {
+        const newSubject = { id: Date.now().toString(), name: name.trim(), color, chapters: [] };
+        appData.subjects.push(newSubject);
+        saveData();
+        renderSidebar();
+        openSubject(newSubject.id);
+      }, `Couleur de « ${name.trim()} »`);
     };
   }
 
@@ -783,13 +1023,12 @@ function setupEventListeners() {
     btnEditSubjectColor.onclick = () => {
       const subject = appData.subjects.find(s => s.id === currentSubjectId);
       if (!subject) return;
-      const color = prompt("Nouvelle couleur HEX :", subject.color || "#4f46e5");
-      if (color) {
+      openColorPicker(subject.color || "#4f46e5", (color) => {
         subject.color = color;
         saveData();
         renderSidebar();
         openSubject(subject.id);
-      }
+      }, `Couleur de « ${subject.name} »`);
     };
   }
 
@@ -1157,6 +1396,7 @@ async function loadCloudData() {
     appData = { ...appData, ...data.content };
     localStorage.setItem('revision_app_data', JSON.stringify(appData));
     applyCustomColors();
+    applyAppearance();
     renderSidebar();
     renderHome();
   }
