@@ -13,6 +13,8 @@
 
   <!-- SDK Supabase via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Chart.js pour les graphiques de notes -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -46,6 +48,8 @@
       <button id="nav-home" class="nav-item active">🏠 Accueil</button>
       <button id="nav-timetable" class="nav-item">📅 Emploi du temps</button>
       <button id="nav-homework" class="nav-item">📝 Devoirs</button>
+      <button id="nav-grades" class="nav-item">📊 Notes & Suivi</button>
+      <button id="nav-settings" class="nav-item">⚙️ Personnalisation</button>
     </nav>
 
     <!-- Liste des matières -->
@@ -196,11 +200,97 @@
       </div>
     </section>
 
+    <!-- VUE 7 : NOTES & SUIVI -->
+    <section id="view-grades" class="view hidden">
+      <div class="view-header">
+        <h1>Suivi des Notes & Progression</h1>
+        <button id="btn-add-grade" class="btn btn-primary">+ Ajouter une note</button>
+      </div>
+
+      <div class="grades-dashboard">
+        <div class="stat-card">
+          <h3>Moyenne Générale</h3>
+          <p id="overall-average" class="stat-value">-- / 20</p>
+        </div>
+      </div>
+
+      <div class="chart-card" style="margin-top: 20px;">
+        <h3>Évolution de la moyenne générale</h3>
+        <canvas id="grades-chart" height="100"></canvas>
+      </div>
+
+      <div class="grades-list-card" style="margin-top: 20px;">
+        <h3>Historique des évaluations</h3>
+        <div id="grades-items-list" class="homework-items-list">
+          <!-- Généré dynamiquement -->
+        </div>
+      </div>
+    </section>
+
+    <!-- VUE 8 : PERSONNALISATION & PARAMÈTRES -->
+    <section id="view-settings" class="view hidden">
+      <div class="view-header">
+        <h1>Personnalisation</h1>
+      </div>
+
+      <div class="settings-card">
+        <h3>Apparence</h3>
+        <p class="text-muted" style="margin-bottom: 15px;">Personnalisez les couleurs principales de l'application.</p>
+        
+        <div class="form-group">
+          <label for="color-primary">Couleur Principale :</label>
+          <input type="color" id="color-primary" class="form-color-picker" value="#4f46e5">
+        </div>
+
+        <div class="form-group">
+          <label for="color-accent">Couleur d'Accentuation :</label>
+          <input type="color" id="color-accent" class="form-color-picker" value="#10b981">
+        </div>
+
+        <button id="btn-reset-theme-colors" class="btn btn-secondary" style="margin-top: 10px;">Réinitialiser les couleurs</button>
+      </div>
+    </section>
+
   </main>
 
   <!-- ========================================== -->
   <!-- MODALES DE CONFIGURATION ET D'ÉDITION      -->
   <!-- ========================================== -->
+
+  <!-- MODALE AJOUT DE NOTE -->
+  <div id="modal-grade" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Ajouter une Note</h3>
+        <button class="btn-icon btn-close-modal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="grade-subject">Matière :</label>
+          <select id="grade-subject" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label for="grade-title">Intitulé du devoir :</label>
+          <input type="text" id="grade-title" class="form-input" placeholder="Ex: DM 1, Interro..." required>
+        </div>
+        <div class="form-group">
+          <label for="grade-value">Note obtenue (/20) :</label>
+          <input type="number" id="grade-value" class="form-input" min="0" max="20" step="0.25" placeholder="15" required>
+        </div>
+        <div class="form-group">
+          <label for="grade-coeff">Coefficient :</label>
+          <input type="number" id="grade-coeff" class="form-input" min="0.1" step="0.1" value="1" required>
+        </div>
+        <div class="form-group">
+          <label for="grade-date">Date :</label>
+          <input type="date" id="grade-date" class="form-input" required>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-save-grade" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- MODALE CREATION/EDIT DEVOIR -->
   <div id="modal-homework" class="modal-backdrop hidden">
