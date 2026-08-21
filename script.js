@@ -15,6 +15,8 @@ let appData = {
   hours: ["8h00 - 9h00", "9h00 - 10h00", "10h15 - 11h15", "11h15 - 12h15", "14h00 - 15h00", "15h00 - 16h00"],
   timetable: {}, // structure : { weekIndex: { dayIndex: { hourIndex: { subjectId, room, teacher } } } }
   homeworks: [], // structure : [ { id, date: "YYYY-MM-DD", subjectId, description, done: false } ]
+  grades: [],    // structure : [ { id, title, subjectId, value, coeff, date } ]
+  customColors: { primary: "#4f46e5", accent: "#10b981" },
   user: null
 };
 
@@ -23,11 +25,13 @@ let currentChapterId = null;
 let activeHighlightNode = null;
 let currentCalendarDate = new Date();
 let selectedSlotTarget = null; // { week, day, hour }
+let gradesChartInstance = null;
 
 /* --- INITIALISATION --- */
 document.addEventListener('DOMContentLoaded', () => {
   loadLocalData();
   initTheme();
+  applyCustomColors();
   setupEventListeners();
   renderSidebar();
   renderHome();
@@ -41,6 +45,8 @@ function loadLocalData() {
     try { 
       const parsed = JSON.parse(saved);
       appData = { ...appData, ...parsed };
+      if (!appData.grades) appData.grades = [];
+      if (!appData.customColors) appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
     } catch(e) { 
       console.error("Erreur lecture localStorage", e); 
     }
@@ -69,7 +75,9 @@ function switchView(viewName) {
     homework: document.getElementById('view-homework'),
     subject: document.getElementById('view-subject'),
     lesson: document.getElementById('view-lesson'),
-    quiz: document.getElementById('view-quiz')
+    quiz: document.getElementById('view-quiz'),
+    grades: document.getElementById('view-grades'),
+    settings: document.getElementById('view-settings')
   };
 
   Object.keys(views).forEach(v => {
@@ -341,7 +349,7 @@ function renderHomeworkList(filterDate = null) {
         <input type="checkbox" ${hw.done ? 'checked' : ''} onchange="toggleHomeworkDone('${hw.id}')">
         <span class="color-badge" style="background-color: ${subject ? subject.color : '#888'}"></span>
         <div>
-          <strong>${subject ? subject.name : 'Matière inconnu'}</strong> - <small>${formatDateFR(hw.date)}</small>
+          <strong>${subject ? subject.name : 'Matière inconnue'}</strong> - <small>${formatDateFR(hw.date)}</small>
           <p>${hw.description}</p>
         </div>
       </div>
@@ -406,6 +414,198 @@ function saveHomework() {
   renderCalendar();
   renderHomeworkList();
   renderHome();
+}
+
+/* --- GESTION DES NOTES ET SUIVI --- */
+function openGrades() {
+  switchView('grades');
+  document.getElementById('nav-grades').classList.add('active');
+  updateBreadcrumb('Notes & Suivi');
+  renderGradesDashboard();
+}
+
+function renderGradesDashboard() {
+  calculateOverallAverage();
+  renderGradesChart();
+  renderGradesList();
+}
+
+function calculateOverallAverage() {
+  const overallEl = document.getElementById('overall-average');
+  if (!overallEl) return;
+
+  if (!appData.grades || appData.grades.length === 0) {
+    overallEl.textContent = "-- / 20";
+    return;
+  }
+
+  let totalScore = 0;
+  let totalCoeff = 0;
+
+  appData.grades.forEach(g => {
+    const val = parseFloat(g.value);
+    const coeff = parseFloat(g.coeff) || 1;
+    if (!isNaN(val)) {
+      totalScore += val * coeff;
+      totalCoeff += coeff;
+    }
+  });
+
+  if (totalCoeff === 0) {
+    overallEl.textContent = "-- / 20";
+  } else {
+    const avg = (totalScore / totalCoeff).toFixed(2);
+    overallEl.textContent = `${avg} / 20`;
+  }
+}
+
+function renderGradesChart() {
+  const ctx = document.getElementById('grades-chart');
+  if (!ctx) return;
+
+  if (gradesChartInstance) {
+    gradesChartInstance.destroy();
+  }
+
+  const sortedGrades = [...appData.grades].sort((a, b) => a.date.localeCompare(b.date));
+
+  let runningScore = 0;
+  let runningCoeff = 0;
+  const labels = [];
+  const data = [];
+
+  sortedGrades.forEach(g => {
+    const val = parseFloat(g.value);
+    const coeff = parseFloat(g.coeff) || 1;
+    runningScore += val * coeff;
+    runningCoeff += coeff;
+
+    labels.push(formatDateFR(g.date));
+    data.push((runningScore / runningCoeff).toFixed(2));
+  });
+
+  gradesChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Moyenne générale',
+        data: data,
+        borderColor: appData.customColors.primary || '#4f46e5',
+        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+        tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: {
+          min: 0,
+          max: 20
+        }
+      }
+    }
+  });
+}
+
+function renderGradesList() {
+  const container = document.getElementById('grades-items-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!appData.grades || appData.grades.length === 0) {
+    container.innerHTML = '<p class="text-muted">Aucune note enregistrée pour le moment.</p>';
+    return;
+  }
+
+  const sorted = [...appData.grades].sort((a, b) => b.date.localeCompare(a.date));
+
+  sorted.forEach(g => {
+    const subject = appData.subjects.find(s => s.id === g.subjectId);
+    const item = document.createElement('div');
+    item.className = 'hw-item';
+
+    item.innerHTML = `
+      <div class="hw-item-left">
+        <span class="color-badge" style="background-color: ${subject ? subject.color : '#888'}"></span>
+        <div>
+          <strong>${g.title}</strong> (${subject ? subject.name : 'Matière inconnue'}) - <small>${formatDateFR(g.date)}</small>
+          <p>Note : <strong>${g.value} / 20</strong> (Coeff. ${g.coeff})</p>
+        </div>
+      </div>
+      <button class="btn-icon" onclick="deleteGrade('${g.id}')">🗑</button>
+    `;
+    container.appendChild(item);
+  });
+}
+
+function openAddGradeModal() {
+  const modal = document.getElementById('modal-grade');
+  const subjectSelect = document.getElementById('grade-subject');
+
+  subjectSelect.innerHTML = '';
+  appData.subjects.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    subjectSelect.appendChild(opt);
+  });
+
+  document.getElementById('grade-title').value = '';
+  document.getElementById('grade-value').value = '';
+  document.getElementById('grade-coeff').value = '1';
+  document.getElementById('grade-date').value = new Date().toISOString().split('T')[0];
+
+  modal.classList.remove('hidden');
+}
+
+function saveGrade() {
+  const subjectId = document.getElementById('grade-subject').value;
+  const title = document.getElementById('grade-title').value.trim();
+  const value = parseFloat(document.getElementById('grade-value').value);
+  const coeff = parseFloat(document.getElementById('grade-coeff').value) || 1;
+  const date = document.getElementById('grade-date').value;
+
+  if (!subjectId || !title || isNaN(value) || !date) {
+    return alert("Veuillez remplir correctement tous les champs.");
+  }
+
+  appData.grades.push({
+    id: Date.now().toString(),
+    subjectId,
+    title,
+    value,
+    coeff,
+    date
+  });
+
+  saveData();
+  document.getElementById('modal-grade').classList.add('hidden');
+  renderGradesDashboard();
+}
+
+function deleteGrade(id) {
+  appData.grades = appData.grades.filter(g => g.id !== id);
+  saveData();
+  renderGradesDashboard();
+}
+
+/* --- PERSONNALISATION --- */
+function openSettings() {
+  switchView('settings');
+  document.getElementById('nav-settings').classList.add('active');
+  updateBreadcrumb('Personnalisation');
+
+  document.getElementById('color-primary').value = appData.customColors.primary || '#4f46e5';
+  document.getElementById('color-accent').value = appData.customColors.accent || '#10b981';
+}
+
+function applyCustomColors() {
+  if (!appData.customColors) return;
+  document.documentElement.style.setProperty('--primary', appData.customColors.primary);
+  document.documentElement.style.setProperty('--accent', appData.customColors.accent);
 }
 
 /* --- GESTION MATIÈRES & CHAPITRES --- */
@@ -481,10 +681,12 @@ function setupEventListeners() {
   if (btnToggleSidebar) btnToggleSidebar.onclick = toggleMobileSidebar;
   if (overlay) overlay.onclick = closeMobileSidebar;
 
-  // Navigation principaux
+  // Navigation principale
   document.getElementById('nav-home').onclick = () => { switchView('home'); renderHome(); };
   document.getElementById('nav-timetable').onclick = openTimetable;
   document.getElementById('nav-homework').onclick = openHomework;
+  document.getElementById('nav-grades').onclick = openGrades;
+  document.getElementById('nav-settings').onclick = openSettings;
 
   // Modales d'annulation / fermeture
   document.querySelectorAll('.btn-close-modal').forEach(btn => {
@@ -536,6 +738,30 @@ function setupEventListeners() {
   };
   document.getElementById('btn-add-homework').onclick = openAddHomeworkModal;
   document.getElementById('btn-save-homework').onclick = saveHomework;
+
+  // Notes
+  document.getElementById('btn-add-grade').onclick = openAddGradeModal;
+  document.getElementById('btn-save-grade').onclick = saveGrade;
+
+  // Personnalisation
+  document.getElementById('color-primary').onchange = (e) => {
+    appData.customColors.primary = e.target.value;
+    applyCustomColors();
+    saveData();
+  };
+
+  document.getElementById('color-accent').onchange = (e) => {
+    appData.customColors.accent = e.target.value;
+    applyCustomColors();
+    saveData();
+  };
+
+  document.getElementById('btn-reset-theme-colors').onclick = () => {
+    appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
+    applyCustomColors();
+    saveData();
+    openSettings();
+  };
 
   // Matières
   const btnAddSubject = document.getElementById('btn-add-subject');
@@ -867,8 +1093,6 @@ function applyTheme(theme) {
   const btnTheme = document.getElementById('btn-toggle-theme');
   const btnThemeMobile = document.getElementById('btn-toggle-theme-mobile');
 
-  // Thème clair => bouton Lune (pour passer en sombre)
-  // Thème sombre => bouton Soleil (pour passer en clair)
   const icon = theme === 'light' ? '🌙' : '☀️';
   if (btnTheme) btnTheme.textContent = icon;
   if (btnThemeMobile) btnThemeMobile.textContent = icon;
@@ -932,6 +1156,7 @@ async function loadCloudData() {
   if (data && data.content) {
     appData = { ...appData, ...data.content };
     localStorage.setItem('revision_app_data', JSON.stringify(appData));
+    applyCustomColors();
     renderSidebar();
     renderHome();
   }
