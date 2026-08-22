@@ -2,6 +2,12 @@
 const SUPABASE_URL = "https://lhbpsrtkffqutexfyhol.supabase.co"; 
 const SUPABASE_ANON_KEY = "sb_publishable_6RKfpvZs2FjupZ-4DZJapg_ckgjxnrC";
 
+/* --- CONFIGURATION ASSISTANT IA ---
+   L'IA est appelée via la fonction serverless Vercel  api/ai.js  (même domaine).
+   Rien à changer si le fichier api/ai.js est bien à la racine du dépôt déployé sur Vercel. */
+const AI_ENDPOINT = "/api/ai";
+
+
 let supabaseClient = null;
 
 if (window.supabase && typeof window.supabase.createClient === 'function') {
@@ -18,6 +24,9 @@ let appData = {
   grades: [],    // structure : [ { id, title, subjectId, value, coeff, date } ]
   customColors: { primary: "#4f46e5", accent: "#10b981" },
   appearance: { font: "system", background: { type: "none", value: "" } },
+  aiAdvice: null, // dernière analyse IA des notes
+  aiChat: [],     // historique du chat avec l'IA
+  updatedAt: null,
   user: null
 };
 
@@ -48,6 +57,7 @@ function loadLocalData() {
       const parsed = JSON.parse(saved);
       appData = { ...appData, ...parsed };
       if (!appData.grades) appData.grades = [];
+      if (!appData.aiChat) appData.aiChat = [];
       if (!appData.customColors) appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
       if (!appData.appearance) appData.appearance = { font: "system", background: { type: "none", value: "" } };
       if (!appData.appearance.background) appData.appearance.background = { type: "none", value: "" };
@@ -58,10 +68,12 @@ function loadLocalData() {
 }
 
 function saveData() {
+  appData.updatedAt = new Date().toISOString();
   localStorage.setItem('revision_app_data', JSON.stringify(appData));
   showSaveIndicator();
   syncToCloud();
 }
+
 
 function showSaveIndicator() {
   const indicator = document.getElementById('save-indicator');
@@ -432,7 +444,264 @@ function renderGradesDashboard() {
   calculateOverallAverage();
   renderGradesChart();
   renderGradesList();
+  renderAIAdvice();
+  renderAIChat();
 }
+
+/* --- ASSISTANT IA --- */
+/* En production (Vercel) : appel de /api/ai (clé cachée côté serveur).
+   En local (python -m http.server) : /api/ai n'existe pas, on bascule
+   automatiquement sur un appel direct à Gemini avec une clé stockée
+   dans le navigateur (localStorage : gemini_api_key). */
+
+const AI_QUIZ_SYSTEM = `Tu es un professeur français qui crée des quiz de révision.
+À partir du cours fourni, génère un quiz au format JSON STRICT :
+{"questions":[{"question":"...","options":["a","b","c","d"],"answer":0,"explanation":"..."}]}
+Règles : uniquement des notions présentes dans le cours, 4 options plausibles par question,
+"answer" est l'index (0-3) de la bonne réponse, explication courte et pédagogique, en français.`;
+
+const AI_ADVICE_SYSTEM = `Tu es un coach scolaire français bienveillant et concret.
+À partir des notes, matières, chapitres et devoirs de l'élève, réponds en JSON STRICT :
+{"summary":"bilan en 2-3 phrases",
+ "priorities":[{"subject":"nom","level":"urgent|à consolider|solide","why":"...","topics":["point 1","point 2"],"actions":["conseil 1","conseil 2"]}],
+ "tips":["conseil de méthode 1","conseil 2","conseil 3"]}
+Classe les matières de la plus urgente à la plus solide. Sois précis, en français, sans blabla.`;
+
+const AI_CHAT_SYSTEM = `Tu es l'assistant de révision de l'élève, en français.
+Tu connais ses matières, ses chapitres, ses notes et ses devoirs (fournis en contexte).
+Donne des conseils concrets, courts et encourageants.`;
+
+function isLocalDev() {
+  return ['localhost', '127.0.0.1', '::1', ''].includes(location.hostname);
+}
+
+function getGeminiKey() {
+  let key = localStorage.getItem('gemini_api_key');
+  if (!key) {
+    key = prompt("Clé API Google AI Studio (mode local uniquement)\nhttps://aistudio.google.com/apikey");
+    if (key) localStorage.setItem('gemini_api_key', key.trim());
+  }
+  return key ? key.trim() : null;
+}
+
+async function callAI(payload) {
+  try {
+    const res = await fetch(AI_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const raw = await res.text();
+    let body = {};
+    try { body = JSON.parse(raw); } catch (e) { body = null; }
+
+    // Pas de fonction serverless disponible (serveur local, 404/405, HTML renvoyé)
+    if (body === null || res.status === 404 || res.status === 405) {
+      return await callGeminiDirect(payload);
+    }
+    if (!res.ok || body.error) {
+      throw new Error(body.error || `Erreur ${res.status} de l'assistant IA.`);
+    }
+    return body;
+  } catch (err) {
+    if (err instanceof TypeError) return await callGeminiDirect(payload); // fetch impossible
+    throw err;
+  }
+}
+
+async function callGeminiDirect(payload) {
+  const key = getGeminiKey();
+  if (!key) {
+    throw new Error("Aucune clé IA. En local, renseigne une clé Google AI Studio ; en ligne, la clé vient de Vercel.");
+  }
+
+  let system = AI_CHAT_SYSTEM;
+  let jsonMode = false;
+  let turns = [];
+
+  if (payload.mode === 'quiz') {
+    system = AI_QUIZ_SYSTEM;
+    jsonMode = true;
+    turns = [{ role: 'user', content: `Chapitre : ${payload.title || 'Sans titre'}\nNombre de questions : ${payload.count || 8}\n\nCours :\n${payload.lesson || ''}` }];
+  } else if (payload.mode === 'advice') {
+    system = AI_ADVICE_SYSTEM;
+    jsonMode = true;
+    turns = [{ role: 'user', content: String(payload.context || '') }];
+  } else {
+    system = `${AI_CHAT_SYSTEM}\n\nContexte élève :\n${String(payload.context || '')}`;
+    turns = (payload.messages || []).slice(-20);
+    if (!turns.length) turns = [{ role: 'user', content: 'Bonjour' }];
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: turns.map(t => ({
+        role: t.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: String(t.content || '') }]
+      })),
+      generationConfig: jsonMode ? { responseMimeType: 'application/json' } : {}
+    })
+  });
+
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 403) localStorage.removeItem('gemini_api_key');
+    throw new Error(res.status === 429
+      ? "Trop de demandes à l'IA, réessaie dans quelques instants."
+      : `Erreur IA (${res.status}). Vérifie ta clé Google AI Studio.`);
+  }
+
+  const data = await res.json();
+  const content = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+
+  if (!jsonMode) return { content };
+  try {
+    const cleaned = content.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '');
+    return { data: JSON.parse(cleaned) };
+  } catch (e) {
+    throw new Error("Réponse IA illisible.");
+  }
+}
+
+
+function buildStudentContext() {
+  const lines = [];
+
+  lines.push("MATIÈRES ET CHAPITRES :");
+  if (!appData.subjects.length) lines.push("- aucune matière enregistrée");
+  appData.subjects.forEach(s => {
+    const chapters = (s.chapters || []).map(c => c.title).join(', ') || 'aucun chapitre';
+    lines.push(`- ${s.name} : ${chapters}`);
+  });
+
+  lines.push("\nNOTES (sur 20) :");
+  if (!appData.grades || !appData.grades.length) lines.push("- aucune note enregistrée");
+  (appData.grades || []).forEach(g => {
+    const subject = appData.subjects.find(s => s.id === g.subjectId);
+    lines.push(`- ${formatDateFR(g.date)} | ${subject ? subject.name : 'Matière inconnue'} | ${g.title} : ${g.value}/20 (coeff ${g.coeff})`);
+  });
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  lines.push("\nDEVOIRS À VENIR :");
+  const upcoming = (appData.homeworks || []).filter(h => h.date >= todayStr && !h.done);
+  if (!upcoming.length) lines.push("- aucun devoir à venir");
+  upcoming.forEach(h => {
+    const subject = appData.subjects.find(s => s.id === h.subjectId);
+    lines.push(`- ${formatDateFR(h.date)} | ${subject ? subject.name : '?'} : ${h.description}`);
+  });
+
+  lines.push(`\nDate du jour : ${formatDateFR(todayStr)}`);
+  return lines.join('\n');
+}
+
+async function requestAIAdvice() {
+  const container = document.getElementById('ai-advice-content');
+  const btn = document.getElementById('btn-ai-advice');
+  if (!container) return;
+
+  if (!appData.grades || !appData.grades.length) {
+    return alert("Ajoutez au moins une note pour que l'IA puisse analyser votre progression.");
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = "Analyse en cours…"; }
+  container.innerHTML = `<div class="ai-loader"></div>`;
+
+  try {
+    const result = await callAI({ mode: 'advice', context: buildStudentContext() });
+    appData.aiAdvice = { ...result.data, date: new Date().toISOString() };
+    saveData();
+    renderAIAdvice();
+  } catch (e) {
+    container.innerHTML = `<p class="ai-error">${escapeHtml(e.message)}</p>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Analyser mes notes"; }
+  }
+}
+
+function renderAIAdvice() {
+  const container = document.getElementById('ai-advice-content');
+  if (!container) return;
+
+  const advice = appData.aiAdvice;
+  if (!advice || !advice.summary) {
+    container.innerHTML = '<p class="text-muted">Aucune analyse pour le moment.</p>';
+    return;
+  }
+
+  const priorities = (advice.priorities || []).map(p => `
+    <div class="ai-priority level-${(p.level || '').replace(/\s/g, '-')}">
+      <div class="ai-priority-head">
+        <strong>${escapeHtml(p.subject)}</strong>
+        <span class="ai-badge">${escapeHtml(p.level || '')}</span>
+      </div>
+      <p>${escapeHtml(p.why || '')}</p>
+      ${(p.topics && p.topics.length) ? `<p><em>Points de leçon à revoir :</em></p><ul>${p.topics.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul>` : ''}
+      ${(p.actions && p.actions.length) ? `<p><em>Conseils :</em></p><ul>${p.actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : ''}
+    </div>`).join('');
+
+  const tips = (advice.tips || []).map(t => `<li>${escapeHtml(t)}</li>`).join('');
+
+  container.innerHTML = `
+    <p class="ai-summary">${escapeHtml(advice.summary)}</p>
+    ${priorities}
+    ${tips ? `<div class="ai-tips"><strong>Méthode de travail</strong><ul>${tips}</ul></div>` : ''}
+    <p class="text-muted" style="margin-top:10px;font-size:0.8rem;">Analyse du ${advice.date ? formatDateFR(advice.date.split('T')[0]) : ''}</p>`;
+}
+
+function renderAIChat() {
+  const box = document.getElementById('ai-chat-messages');
+  if (!box) return;
+
+  const messages = appData.aiChat || [];
+  if (!messages.length) {
+    box.innerHTML = '<p class="text-muted">Posez une question à l\'assistant : organisation, méthode, explication d\'une notion…</p>';
+    return;
+  }
+
+  box.innerHTML = messages.map(m => `
+    <div class="ai-msg ${m.role === 'user' ? 'user' : 'bot'}">
+      ${escapeHtml(m.content).replace(/\n/g, '<br>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')}
+    </div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendAIChatMessage() {
+  const input = document.getElementById('ai-chat-input');
+  const btn = document.getElementById('btn-ai-chat-send');
+  if (!input) return;
+
+  const text = input.value.trim();
+  if (!text) return;
+
+  if (!appData.aiChat) appData.aiChat = [];
+  appData.aiChat.push({ role: 'user', content: text });
+  input.value = '';
+  renderAIChat();
+
+  const box = document.getElementById('ai-chat-messages');
+  if (box) box.insertAdjacentHTML('beforeend', '<div class="ai-msg bot" id="ai-typing"><div class="ai-loader"></div></div>');
+  if (btn) btn.disabled = true;
+
+  try {
+    const result = await callAI({
+      mode: 'chat',
+      context: buildStudentContext(),
+      messages: appData.aiChat.slice(-20)
+    });
+    appData.aiChat.push({ role: 'assistant', content: result.content || "…" });
+  } catch (e) {
+    appData.aiChat.push({ role: 'assistant', content: `⚠️ ${e.message}` });
+  } finally {
+    if (btn) btn.disabled = false;
+    saveData();
+    renderAIChat();
+  }
+}
+
 
 function calculateOverallAverage() {
   const overallEl = document.getElementById('overall-average');
@@ -703,6 +972,15 @@ function openSettings() {
   document.getElementById('color-primary').value = appData.customColors.primary || '#4f46e5';
   document.getElementById('color-accent').value = appData.customColors.accent || '#10b981';
 
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const defaults = isDark
+    ? { text: '#f3f4f6', heading: '#f3f4f6', muted: '#9ca3af' }
+    : { text: '#1f2937', heading: '#1f2937', muted: '#6b7280' };
+  ['text', 'heading', 'muted'].forEach(key => {
+    const input = document.getElementById('color-' + key);
+    if (input) input.value = appData.customColors[key] || defaults[key];
+  });
+
   const bg = appData.appearance.background || { type: 'none', value: '' };
   const solidInput = document.getElementById('bg-solid-color');
   if (solidInput && bg.type === 'color') solidInput.value = bg.value;
@@ -715,9 +993,22 @@ function openSettings() {
 
 function applyCustomColors() {
   if (!appData.customColors) return;
-  document.documentElement.style.setProperty('--primary', appData.customColors.primary);
-  document.documentElement.style.setProperty('--accent', appData.customColors.accent);
+  const root = document.documentElement;
+  root.style.setProperty('--primary', appData.customColors.primary);
+  root.style.setProperty('--accent', appData.customColors.accent);
+
+  // Couleur de police personnalisée (vide = valeur du thème)
+  const c = appData.customColors;
+  if (c.text) root.style.setProperty('--text-main', c.text);
+  else root.style.removeProperty('--text-main');
+
+  if (c.muted) root.style.setProperty('--text-muted', c.muted);
+  else root.style.removeProperty('--text-muted');
+
+  if (c.heading) root.style.setProperty('--heading-color', c.heading);
+  else root.style.removeProperty('--heading-color');
 }
+
 
 /* --- SÉLECTEUR VISUEL DE COULEURS (MATIÈRES) --- */
 const SUBJECT_COLORS = [
@@ -827,7 +1118,7 @@ function renderChapters() {
     card.className = 'chapter-card';
     card.innerHTML = `
       <h3>${chap.title}</h3>
-      <small>${chap.annotations ? chap.annotations.length : 0} notion(s) surlignée(s)</small>
+      <small>${chap.content ? 'Cours enregistré' : 'Chapitre vide'}</small>
     `;
     card.onclick = () => openChapter(chap.id);
     grid.appendChild(card);
@@ -853,27 +1144,39 @@ function openChapter(chapterId) {
   switchView('lesson');
 }
 
+/* el() : comme getElementById, mais renvoie un objet factice si l'élément
+   n'existe pas — un id manquant ne casse plus tous les autres boutons. */
+function el(id) {
+  const node = document.getElementById(id);
+  if (node) return node;
+  console.warn('Élément introuvable :', id);
+  return new Proxy({}, {
+    get: (t, p) => (p === 'classList' ? { add() {}, remove() {}, toggle() {} } : p === 'value' ? '' : () => {}),
+    set: () => true
+  });
+}
+
 /* --- LISTENERS INTERFACE --- */
 function setupEventListeners() {
   setupColorPicker();
   // Thème
-  const btnToggleTheme = document.getElementById('btn-toggle-theme');
-  const btnToggleThemeMobile = document.getElementById('btn-toggle-theme-mobile');
+  const btnToggleTheme = el('btn-toggle-theme');
+  const btnToggleThemeMobile = el('btn-toggle-theme-mobile');
   if (btnToggleTheme) btnToggleTheme.onclick = toggleTheme;
   if (btnToggleThemeMobile) btnToggleThemeMobile.onclick = toggleTheme;
 
   // Sidebar Mobile
-  const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
+  const btnToggleSidebar = el('btn-toggle-sidebar');
+  const overlay = el('sidebar-overlay');
   if (btnToggleSidebar) btnToggleSidebar.onclick = toggleMobileSidebar;
   if (overlay) overlay.onclick = closeMobileSidebar;
 
   // Navigation principale
-  document.getElementById('nav-home').onclick = () => { switchView('home'); renderHome(); };
-  document.getElementById('nav-timetable').onclick = openTimetable;
-  document.getElementById('nav-homework').onclick = openHomework;
-  document.getElementById('nav-grades').onclick = openGrades;
-  document.getElementById('nav-settings').onclick = openSettings;
+  el('nav-home').onclick = () => { switchView('home'); renderHome(); };
+  el('nav-timetable').onclick = openTimetable;
+  el('nav-homework').onclick = openHomework;
+  el('nav-grades').onclick = openGrades;
+  el('nav-settings').onclick = openSettings;
 
   // Modales d'annulation / fermeture
   document.querySelectorAll('.btn-close-modal').forEach(btn => {
@@ -883,26 +1186,26 @@ function setupEventListeners() {
   });
 
   // Emploi du Temps
-  document.getElementById('btn-config-timetable').onclick = () => {
-    document.getElementById('cfg-weeks').value = appData.weeks.join(', ');
-    document.getElementById('cfg-hours').value = appData.hours.join('\n');
-    document.getElementById('modal-timetable-config').classList.remove('hidden');
+  el('btn-config-timetable').onclick = () => {
+    el('cfg-weeks').value = appData.weeks.join(', ');
+    el('cfg-hours').value = appData.hours.join('\n');
+    el('modal-timetable-config').classList.remove('hidden');
   };
 
-  document.getElementById('btn-save-timetable-config').onclick = () => {
-    const weeksInput = document.getElementById('cfg-weeks').value;
-    const hoursInput = document.getElementById('cfg-hours').value;
+  el('btn-save-timetable-config').onclick = () => {
+    const weeksInput = el('cfg-weeks').value;
+    const hoursInput = el('cfg-hours').value;
 
     appData.weeks = weeksInput.split(',').map(w => w.trim()).filter(Boolean);
     appData.hours = hoursInput.split('\n').map(h => h.trim()).filter(Boolean);
 
     saveData();
-    document.getElementById('modal-timetable-config').classList.add('hidden');
+    el('modal-timetable-config').classList.add('hidden');
     openTimetable();
   };
 
-  document.getElementById('btn-save-slot').onclick = saveSlot;
-  document.getElementById('btn-delete-slot').onclick = () => {
+  el('btn-save-slot').onclick = saveSlot;
+  el('btn-delete-slot').onclick = () => {
     if (selectedSlotTarget) {
       const { week, day, hour } = selectedSlotTarget;
       if (appData.timetable[week]?.[day]?.[hour]) {
@@ -911,39 +1214,39 @@ function setupEventListeners() {
         renderTimetableGrid(week);
       }
     }
-    document.getElementById('modal-slot').classList.add('hidden');
+    el('modal-slot').classList.add('hidden');
   };
 
   // Devoirs & Calendrier Navigation
-  document.getElementById('cal-prev').onclick = () => {
+  el('cal-prev').onclick = () => {
     currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
     renderCalendar();
   };
-  document.getElementById('cal-next').onclick = () => {
+  el('cal-next').onclick = () => {
     currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
     renderCalendar();
   };
-  document.getElementById('btn-add-homework').onclick = openAddHomeworkModal;
-  document.getElementById('btn-save-homework').onclick = saveHomework;
+  el('btn-add-homework').onclick = openAddHomeworkModal;
+  el('btn-save-homework').onclick = saveHomework;
 
   // Notes
-  document.getElementById('btn-add-grade').onclick = openAddGradeModal;
-  document.getElementById('btn-save-grade').onclick = saveGrade;
+  el('btn-add-grade').onclick = openAddGradeModal;
+  el('btn-save-grade').onclick = saveGrade;
 
   // Personnalisation
-  document.getElementById('color-primary').onchange = (e) => {
+  el('color-primary').onchange = (e) => {
     appData.customColors.primary = e.target.value;
     applyCustomColors();
     saveData();
   };
 
-  document.getElementById('color-accent').onchange = (e) => {
+  el('color-accent').onchange = (e) => {
     appData.customColors.accent = e.target.value;
     applyCustomColors();
     saveData();
   };
 
-  const bgSolid = document.getElementById('bg-solid-color');
+  const bgSolid = el('bg-solid-color');
   if (bgSolid) {
     bgSolid.oninput = (e) => {
       appData.appearance.background = { type: 'color', value: e.target.value };
@@ -953,10 +1256,10 @@ function setupEventListeners() {
     };
   }
 
-  const btnApplyBgUrl = document.getElementById('btn-apply-bg-url');
+  const btnApplyBgUrl = el('btn-apply-bg-url');
   if (btnApplyBgUrl) {
     btnApplyBgUrl.onclick = () => {
-      const url = document.getElementById('bg-image-url').value.trim();
+      const url = el('bg-image-url').value.trim();
       if (!url) return;
       appData.appearance.background = { type: 'image', value: url };
       applyAppearance();
@@ -965,7 +1268,7 @@ function setupEventListeners() {
     };
   }
 
-  const bgFile = document.getElementById('bg-image-file');
+  const bgFile = el('bg-image-file');
   if (bgFile) {
     bgFile.onchange = (e) => {
       const file = e.target.files && e.target.files[0];
@@ -985,7 +1288,7 @@ function setupEventListeners() {
     };
   }
 
-  const btnResetBg = document.getElementById('btn-reset-bg');
+  const btnResetBg = el('btn-reset-bg');
   if (btnResetBg) {
     btnResetBg.onclick = () => {
       appData.appearance.background = { type: 'none', value: '' };
@@ -995,15 +1298,44 @@ function setupEventListeners() {
     };
   }
 
-  document.getElementById('btn-reset-theme-colors').onclick = () => {
-    appData.customColors = { primary: "#4f46e5", accent: "#10b981" };
+  el('btn-reset-theme-colors').onclick = () => {
+    appData.customColors = {
+      ...appData.customColors,
+      primary: "#4f46e5",
+      accent: "#10b981"
+    };
     applyCustomColors();
     saveData();
     openSettings();
   };
 
+  // Couleur du texte
+  ['text', 'heading', 'muted'].forEach(key => {
+    const input = el('color-' + key);
+    if (input) {
+      input.oninput = (e) => {
+        appData.customColors[key] = e.target.value;
+        applyCustomColors();
+        saveData();
+      };
+    }
+  });
+
+  const btnResetText = el('btn-reset-text-colors');
+  if (btnResetText) {
+    btnResetText.onclick = () => {
+      delete appData.customColors.text;
+      delete appData.customColors.heading;
+      delete appData.customColors.muted;
+      applyCustomColors();
+      saveData();
+      openSettings();
+    };
+  }
+
+
   // Matières
-  const btnAddSubject = document.getElementById('btn-add-subject');
+  const btnAddSubject = el('btn-add-subject');
   if (btnAddSubject) {
     btnAddSubject.onclick = () => {
       const name = prompt("Nom de la matière :");
@@ -1018,7 +1350,7 @@ function setupEventListeners() {
     };
   }
 
-  const btnEditSubjectColor = document.getElementById('btn-edit-subject-color');
+  const btnEditSubjectColor = el('btn-edit-subject-color');
   if (btnEditSubjectColor) {
     btnEditSubjectColor.onclick = () => {
       const subject = appData.subjects.find(s => s.id === currentSubjectId);
@@ -1032,7 +1364,7 @@ function setupEventListeners() {
     };
   }
 
-  const btnRenameSubject = document.getElementById('btn-rename-subject');
+  const btnRenameSubject = el('btn-rename-subject');
   if (btnRenameSubject) {
     btnRenameSubject.onclick = () => {
       const subject = appData.subjects.find(s => s.id === currentSubjectId);
@@ -1047,7 +1379,7 @@ function setupEventListeners() {
     };
   }
 
-  const btnDeleteSubject = document.getElementById('btn-delete-subject');
+  const btnDeleteSubject = el('btn-delete-subject');
   if (btnDeleteSubject) {
     btnDeleteSubject.onclick = () => {
       if (confirm("Voulez-vous vraiment supprimer cette matière et tous ses chapitres ?")) {
@@ -1062,7 +1394,7 @@ function setupEventListeners() {
   }
 
   // Chapitres
-  const btnAddChapter = document.getElementById('btn-add-chapter');
+  const btnAddChapter = el('btn-add-chapter');
   if (btnAddChapter) {
     btnAddChapter.onclick = () => {
       const subject = appData.subjects.find(s => s.id === currentSubjectId);
@@ -1077,7 +1409,7 @@ function setupEventListeners() {
     };
   }
 
-  const btnDeleteChapter = document.getElementById('btn-delete-chapter');
+  const btnDeleteChapter = el('btn-delete-chapter');
   if (btnDeleteChapter) {
     btnDeleteChapter.onclick = () => {
       if (confirm("Supprimer ce chapitre ?")) {
@@ -1090,10 +1422,10 @@ function setupEventListeners() {
     };
   }
 
-  const btnBackToSubject = document.getElementById('btn-back-to-subject');
+  const btnBackToSubject = el('btn-back-to-subject');
   if (btnBackToSubject) btnBackToSubject.onclick = () => openSubject(currentSubjectId);
 
-  const btnExitQuiz = document.getElementById('btn-exit-quiz');
+  const btnExitQuiz = el('btn-exit-quiz');
   if (btnExitQuiz) btnExitQuiz.onclick = () => openChapter(currentChapterId);
 
   // Éditeur Formattage
@@ -1105,10 +1437,10 @@ function setupEventListeners() {
     };
   });
 
-  const editor = document.getElementById('editor');
+  const editor = el('editor');
   if (editor) editor.oninput = autoSaveCurrentLesson;
 
-  const chapterTitle = document.getElementById('chapter-title');
+  const chapterTitle = el('chapter-title');
   if (chapterTitle) {
     chapterTitle.onblur = () => {
       const subject = appData.subjects.find(s => s.id === currentSubjectId);
@@ -1121,38 +1453,52 @@ function setupEventListeners() {
     };
   }
 
-  // Surlignage Magique
-  const btnMagic = document.getElementById('btn-magic-highlight');
-  if (btnMagic) btnMagic.onclick = applyMagicHighlight;
-
-  const btnSaveAnn = document.getElementById('btn-save-annotation');
-  if (btnSaveAnn) btnSaveAnn.onclick = saveAnnotation;
-
-  const btnRemoveHighlight = document.getElementById('btn-remove-highlight');
-  if (btnRemoveHighlight) btnRemoveHighlight.onclick = removeHighlight;
-
-  // Quiz
-  const btnStartQuiz = document.getElementById('btn-start-quiz');
+  // Quiz généré par l'IA
+  const btnStartQuiz = el('btn-start-quiz');
   if (btnStartQuiz) btnStartQuiz.onclick = startQuiz;
 
+  // Assistant IA (onglet Notes & Suivi)
+  const btnAdvice = el('btn-ai-advice');
+  if (btnAdvice) btnAdvice.onclick = requestAIAdvice;
+
+  const btnChatSend = el('btn-ai-chat-send');
+  if (btnChatSend) btnChatSend.onclick = sendAIChatMessage;
+
+  const chatInput = el('ai-chat-input');
+  if (chatInput) {
+    chatInput.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAIChatMessage(); }
+    };
+  }
+
+  const btnChatClear = el('btn-ai-chat-clear');
+  if (btnChatClear) {
+    btnChatClear.onclick = () => {
+      appData.aiChat = [];
+      saveData();
+      renderAIChat();
+    };
+  }
+
+
   // Modale Authentification
-  const btnAuthModal = document.getElementById('btn-auth-modal');
-  if (btnAuthModal) btnAuthModal.onclick = () => document.getElementById('auth-modal').classList.remove('hidden');
+  const btnAuthModal = el('btn-auth-modal');
+  if (btnAuthModal) btnAuthModal.onclick = () => el('auth-modal').classList.remove('hidden');
 
-  const btnCloseModal = document.getElementById('btn-close-modal');
-  if (btnCloseModal) btnCloseModal.onclick = () => document.getElementById('auth-modal').classList.add('hidden');
+  const btnCloseModal = el('btn-close-modal');
+  if (btnCloseModal) btnCloseModal.onclick = () => el('auth-modal').classList.add('hidden');
 
-  const btnLogin = document.getElementById('btn-login');
+  const btnLogin = el('btn-login');
   if (btnLogin) btnLogin.onclick = handleLogin;
 
-  const btnSignup = document.getElementById('btn-signup');
+  const btnSignup = el('btn-signup');
   if (btnSignup) btnSignup.onclick = handleSignup;
 
-  const btnLogout = document.getElementById('btn-logout');
+  const btnLogout = el('btn-logout');
   if (btnLogout) btnLogout.onclick = handleLogout;
 }
 
-/* --- ÉDITEUR & SURLIGNAGE MAGIQUE --- */
+/* --- ÉDITEUR --- */
 function autoSaveCurrentLesson() {
   if (!currentChapterId) return;
   const subject = appData.subjects.find(s => s.id === currentSubjectId);
@@ -1165,103 +1511,58 @@ function autoSaveCurrentLesson() {
   if (!editor) return;
 
   chap.content = editor.innerHTML;
-  
-  const highlights = editor.querySelectorAll('mark.magic-highlight');
-  chap.annotations = Array.from(highlights).map(h => ({
-    id: h.dataset.id,
-    text: h.textContent,
-    note: h.dataset.note || ""
-  }));
-
   saveData();
 }
 
-function applyMagicHighlight() {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-    return alert("Sélectionnez du texte dans la leçon pour utiliser le surlignage magique.");
-  }
-
-  const range = sel.getRangeAt(0);
-  const mark = document.createElement('mark');
-  mark.className = 'magic-highlight';
-  mark.dataset.id = Date.now().toString();
-  mark.dataset.note = "";
-
-  try {
-    range.surroundContents(mark);
-    attachClickToMark(mark);
-    autoSaveCurrentLesson();
-    showAnnotationPopover(mark);
-  } catch(e) {
-    alert("Veuillez sélectionner uniquement du texte dans un même paragraphe.");
-  }
-}
-
 function attachHighlightEvents() {
-  const editor = document.getElementById('editor');
-  if (editor) {
-    editor.querySelectorAll('mark.magic-highlight').forEach(attachClickToMark);
-  }
+  // Le surlignage magique a été remplacé par la génération de quiz par l'IA.
 }
 
-function attachClickToMark(mark) {
-  mark.onclick = (e) => {
-    e.stopPropagation();
-    showAnnotationPopover(mark);
-  };
-}
+/* --- QUIZ GÉNÉRÉ PAR L'IA --- */
+let currentQuiz = null;
 
-function showAnnotationPopover(mark) {
-  const popover = document.getElementById('annotation-popover');
-  const popoverInput = document.getElementById('annotation-input');
-  if (!popover || !popoverInput) return;
-
-  activeHighlightNode = mark;
-  const rect = mark.getBoundingClientRect();
-  popover.style.top = `${rect.bottom + window.scrollY + 5}px`;
-  popover.style.left = `${rect.left + window.scrollX}px`;
-  popoverInput.value = mark.dataset.note || "";
-  popover.classList.remove('hidden');
-}
-
-function saveAnnotation() {
-  const popover = document.getElementById('annotation-popover');
-  const popoverInput = document.getElementById('annotation-input');
-  if (activeHighlightNode && popoverInput) {
-    activeHighlightNode.dataset.note = popoverInput.value;
-    autoSaveCurrentLesson();
-  }
-  if (popover) popover.classList.add('hidden');
-}
-
-function removeHighlight() {
-  const popover = document.getElementById('annotation-popover');
-  if (activeHighlightNode) {
-    const text = activeHighlightNode.textContent;
-    activeHighlightNode.replaceWith(text);
-    autoSaveCurrentLesson();
-  }
-  if (popover) popover.classList.add('hidden');
-}
-
-/* --- QUIZ --- */
-function startQuiz() {
+async function startQuiz() {
   const subject = appData.subjects.find(s => s.id === currentSubjectId);
   if (!subject) return;
 
   const chap = subject.chapters.find(c => c.id === currentChapterId);
   if (!chap) return;
 
-  if (!chap.annotations || chap.annotations.length === 0) {
-    return alert("Surlignez au moins une notion importante pour créer un quiz !");
+  const editor = document.getElementById('editor');
+  const lessonText = (editor ? editor.innerText : '').trim();
+
+  if (lessonText.length < 40) {
+    return alert("Écrivez ou collez d'abord votre cours : l'IA a besoin de contenu pour créer le quiz.");
   }
 
-  generateQuiz(chap.annotations);
   switchView('quiz');
+  const container = document.getElementById('quiz-container');
+  container.innerHTML = `<div class="quiz-card"><h2>✨ L'IA prépare votre quiz…</h2><p class="text-muted">Quelques secondes de patience.</p><div class="ai-loader"></div></div>`;
+
+  try {
+    const result = await callAI({
+      mode: 'quiz',
+      title: chap.title,
+      lesson: lessonText,
+      count: 8
+    });
+
+    const questions = (result.data && result.data.questions) || [];
+    if (!questions.length) throw new Error("Aucune question générée.");
+
+    currentQuiz = questions;
+    runQuiz(questions);
+  } catch (e) {
+    container.innerHTML = `
+      <div class="quiz-card">
+        <h2>Impossible de générer le quiz</h2>
+        <p class="text-muted">${e.message}</p>
+        <button onclick="startQuiz()" class="btn btn-primary" style="margin-top:20px;">Réessayer</button>
+      </div>`;
+  }
 }
 
-function generateQuiz(annotations) {
+function runQuiz(questions) {
   const container = document.getElementById('quiz-container');
   if (!container) return;
 
@@ -1269,49 +1570,66 @@ function generateQuiz(annotations) {
   let score = 0;
 
   function showQuestion() {
-    if (currentStep >= annotations.length) {
-      const finalGrade = Math.round((score / annotations.length) * 20);
+    if (currentStep >= questions.length) {
+      const finalGrade = Math.round((score / questions.length) * 20);
       container.innerHTML = `
         <div class="quiz-card">
-          <h2>Quiz Terminé !</h2>
+          <h2>Quiz terminé !</h2>
           <p style="font-size: 1.5rem; margin: 20px 0;">Note : <strong>${finalGrade} / 20</strong></p>
-          <p>${score} réponse(s) correcte(s) sur ${annotations.length}</p>
-          <button onclick="openChapter('${currentChapterId}')" class="btn btn-primary" style="margin-top:20px;">Retour à la leçon</button>
-        </div>
-      `;
+          <p>${score} bonne(s) réponse(s) sur ${questions.length}</p>
+          <div style="display:flex;gap:10px;justify-content:center;margin-top:20px;">
+            <button onclick="startQuiz()" class="btn btn-magic">Nouveau quiz</button>
+            <button onclick="openChapter('${currentChapterId}')" class="btn btn-primary">Retour à la leçon</button>
+          </div>
+        </div>`;
       return;
     }
 
-    const item = annotations[currentStep];
+    const q = questions[currentStep];
+    const options = Array.isArray(q.options) ? q.options : [];
+
     container.innerHTML = `
       <div class="quiz-card">
-        <h3>Question ${currentStep + 1}/${annotations.length}</h3>
-        <p style="margin: 15px 0;">Que désigne ou explicite la notion : <strong>« ${item.text} »</strong> ?</p>
-        <div class="quiz-options">
-          <button class="btn btn-secondary" id="btn-reveal">Afficher la réponse / Explication</button>
+        <h3>Question ${currentStep + 1}/${questions.length}</h3>
+        <p style="margin: 15px 0; font-size:1.1rem;"><strong>${escapeHtml(q.question || '')}</strong></p>
+        <div class="quiz-options" id="quiz-options">
+          ${options.map((opt, i) => `<button class="btn btn-secondary quiz-option" data-i="${i}">${escapeHtml(opt)}</button>`).join('')}
         </div>
-        <div id="quiz-answer" class="hidden" style="margin-top: 15px; padding: 15px; background: var(--bg-sidebar); border-radius: 8px;">
-          <p><strong>Explication :</strong> ${item.note || "Aucune note enregistrée."}</p>
-          <p style="margin-top: 15px;">Avez-vous eu juste ?</p>
-          <div style="display:flex; gap:10px; margin-top:10px; justify-content:center;">
-            <button id="btn-correct" class="btn btn-primary">Oui (+1)</button>
-            <button id="btn-wrong" class="btn btn-danger">Non</button>
-          </div>
-        </div>
-      </div>
-    `;
+        <div id="quiz-answer" class="hidden quiz-answer"></div>
+      </div>`;
 
-    document.getElementById('btn-reveal').onclick = () => {
-      document.getElementById('quiz-answer').classList.remove('hidden');
-      document.getElementById('btn-reveal').style.display = 'none';
-    };
+    container.querySelectorAll('.quiz-option').forEach(btn => {
+      btn.onclick = () => {
+        const chosen = parseInt(btn.dataset.i);
+        const correct = chosen === Number(q.answer);
+        if (correct) score++;
 
-    document.getElementById('btn-correct').onclick = () => { score++; currentStep++; showQuestion(); };
-    document.getElementById('btn-wrong').onclick = () => { currentStep++; showQuestion(); };
+        container.querySelectorAll('.quiz-option').forEach(b => {
+          b.disabled = true;
+          const i = parseInt(b.dataset.i);
+          if (i === Number(q.answer)) b.classList.add('correct');
+          else if (i === chosen) b.classList.add('wrong');
+        });
+
+        const answerEl = document.getElementById('quiz-answer');
+        answerEl.classList.remove('hidden');
+        answerEl.innerHTML = `
+          <p><strong>${correct ? '✅ Bonne réponse !' : '❌ Réponse incorrecte.'}</strong></p>
+          <p style="margin-top:8px;">${escapeHtml(q.explanation || '')}</p>
+          <button id="btn-next-q" class="btn btn-primary" style="margin-top:15px;">Question suivante</button>`;
+        document.getElementById('btn-next-q').onclick = () => { currentStep++; showQuestion(); };
+      };
+    });
   }
 
   showQuestion();
 }
+
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 
 /* --- THÈME & MOBILE --- */
 function initTheme() {
@@ -1359,48 +1677,171 @@ function formatDateFR(dateStr) {
 }
 
 /* --- SUPABASE & AUTHENTIFICATION --- */
-async function syncToCloud() {
+let syncTimer = null;
+let realtimeChannel = null;
+let isApplyingCloudData = false;
+
+function syncToCloud() {
+  if (!supabaseClient || !appData.user || isApplyingCloudData) return;
+  // Anti-spam : on regroupe les sauvegardes rapprochées
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushToCloud, 600);
+}
+
+async function pushToCloud() {
   if (!supabaseClient || !appData.user) return;
-  
+
+  const payload = { ...appData };
+  delete payload.user; // on ne stocke pas la session dans le contenu
+  appData.updatedAt = new Date().toISOString();
+  payload.updatedAt = appData.updatedAt;
+
   try {
-    await supabaseClient.from('user_revisions').upsert({
-      user_id: appData.user.id,
-      content: appData,
-      updated_at: new Date()
-    });
-  } catch(e) {
+    const { error } = await supabaseClient
+      .from('user_revisions')
+      .upsert(
+        {
+          user_id: appData.user.id,
+          content: payload,
+          updated_at: appData.updatedAt
+        },
+        { onConflict: 'user_id' }
+      );
+    if (error) {
+      console.error("Erreur de synchronisation cloud :", error);
+      setSyncState('error');
+    } else {
+      setSyncState('online');
+    }
+  } catch (e) {
     console.error("Erreur de synchronisation cloud :", e);
+    setSyncState('error');
+  }
+}
+
+function setSyncState(state) {
+  const statusEl = document.getElementById('sync-status');
+  if (!statusEl) return;
+  if (state === 'online') {
+    statusEl.textContent = "Synchronisé (Cloud)";
+    statusEl.className = "sync-status online";
+  } else if (state === 'error') {
+    statusEl.textContent = "Erreur de synchro";
+    statusEl.className = "sync-status offline";
+  } else {
+    statusEl.textContent = "Hors-ligne (Local)";
+    statusEl.className = "sync-status offline";
   }
 }
 
 async function checkAuth() {
   if (!supabaseClient) return;
-  
+
   try {
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (session) {
       appData.user = session.user;
       updateAuthUI(true);
-      loadCloudData();
+      await loadCloudData();
+      startRealtimeSync();
     }
   } catch(e) {
     console.error("Erreur d'authentification :", e);
   }
+
+  // Re-synchronise dès que l'appareil revient au premier plan
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadCloudData();
+  });
+  window.addEventListener('focus', () => loadCloudData());
 }
 
-async function loadCloudData() {
-  if (!supabaseClient || !appData.user) return;
-  
-  const { data, error } = await supabaseClient.from('user_revisions').select('content').eq('user_id', appData.user.id).single();
-  if (data && data.content) {
-    appData = { ...appData, ...data.content };
+function applyCloudContent(content) {
+  if (!content) return;
+  isApplyingCloudData = true;
+
+  const localDate = appData.updatedAt ? new Date(appData.updatedAt).getTime() : 0;
+  const cloudDate = content.updatedAt ? new Date(content.updatedAt).getTime() : 1;
+
+  // Le cloud gagne sauf si les données locales sont plus récentes
+  if (cloudDate >= localDate) {
+    const user = appData.user;
+    appData = { ...appData, ...content, user };
     localStorage.setItem('revision_app_data', JSON.stringify(appData));
     applyCustomColors();
     applyAppearance();
     renderSidebar();
+    refreshCurrentView();
+  }
+
+  isApplyingCloudData = false;
+}
+
+function refreshCurrentView() {
+  const visible = document.querySelector('.view:not(.hidden)');
+  const id = visible ? visible.id : 'view-home';
+  if (id === 'view-timetable') {
+    const weekSelect = document.getElementById('select-week');
+    renderTimetableGrid(weekSelect ? parseInt(weekSelect.value) || 0 : 0);
+  } else if (id === 'view-homework') {
+    renderCalendar();
+    renderHomeworkList();
+  } else if (id === 'view-grades') {
+    renderGradesDashboard();
+  } else if (id === 'view-subject') {
+    renderChapters();
+  } else if (id === 'view-home') {
     renderHome();
   }
 }
+
+function startRealtimeSync() {
+  if (!supabaseClient || !appData.user) return;
+  if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
+
+  realtimeChannel = supabaseClient
+    .channel('revisions-sync')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'user_revisions',
+        filter: `user_id=eq.${appData.user.id}`
+      },
+      (payload) => {
+        if (payload.new && payload.new.content) {
+          applyCloudContent(payload.new.content);
+        }
+      }
+    )
+    .subscribe();
+}
+
+async function loadCloudData() {
+  if (!supabaseClient || !appData.user) return;
+
+  const { data, error } = await supabaseClient
+    .from('user_revisions')
+    .select('content')
+    .eq('user_id', appData.user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Erreur de lecture cloud :", error);
+    setSyncState('error');
+    return;
+  }
+
+  if (data && data.content) {
+    applyCloudContent(data.content);
+    setSyncState('online');
+  } else {
+    // Première synchro de ce compte : on envoie les données locales
+    pushToCloud();
+  }
+}
+
 
 async function handleLogin() {
   const emailInput = document.getElementById('auth-email');
@@ -1423,7 +1864,8 @@ async function handleLogin() {
   } else {
     appData.user = data.user;
     updateAuthUI(true);
-    loadCloudData();
+    await loadCloudData();
+    startRealtimeSync();
     document.getElementById('auth-modal').classList.add('hidden');
   }
 }
@@ -1455,6 +1897,7 @@ async function handleSignup() {
 }
 
 async function handleLogout() {
+  if (supabaseClient && realtimeChannel) { supabaseClient.removeChannel(realtimeChannel); realtimeChannel = null; }
   if (supabaseClient) await supabaseClient.auth.signOut();
   appData.user = null;
   updateAuthUI(false);
