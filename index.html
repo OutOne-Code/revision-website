@@ -170,10 +170,10 @@
       <div class="view-header">
         <button id="btn-back-to-subject" class="btn btn-secondary">← Retour</button>
         <div class="actions">
-          <button id="btn-magic-highlight" class="btn btn-magic">Surlignage Magique</button>
-          <button id="btn-start-quiz" class="btn btn-accent">Lancer un Quiz</button>
+          <button id="btn-start-quiz" class="btn btn-magic">✨ Générer un quiz avec l'IA</button>
           <button id="btn-delete-chapter" class="btn btn-danger">Supprimer</button>
         </div>
+
       </div>
 
       <h1 id="chapter-title" contenteditable="true" class="editable-title">Titre du chapitre</h1>
@@ -225,6 +225,32 @@
           <!-- Généré dynamiquement -->
         </div>
       </div>
+
+      <!-- COACH IA : POINTS DE LEÇON & CONSEILS -->
+      <div class="settings-card ai-card" style="margin-top: 20px;">
+        <div class="ai-card-header">
+          <h3>🤖 Analyse IA de mes résultats</h3>
+          <button id="btn-ai-advice" class="btn btn-magic">Analyser mes notes</button>
+        </div>
+        <p class="text-muted">L'IA repère les matières à travailler, les points de leçon à revoir et te donne des conseils.</p>
+        <div id="ai-advice-content" class="ai-advice-content">
+          <p class="text-muted">Aucune analyse pour le moment.</p>
+        </div>
+      </div>
+
+      <!-- CHAT IA -->
+      <div class="settings-card ai-card" style="margin-top: 20px;">
+        <div class="ai-card-header">
+          <h3>💬 Discuter avec l'assistant</h3>
+          <button id="btn-ai-chat-clear" class="btn btn-secondary btn-small">Effacer</button>
+        </div>
+        <div id="ai-chat-messages" class="ai-chat-messages"></div>
+        <div class="ai-chat-input-row">
+          <textarea id="ai-chat-input" class="form-input" rows="2" placeholder="Ex : comment réviser les maths avant vendredi ?"></textarea>
+          <button id="btn-ai-chat-send" class="btn btn-primary">Envoyer</button>
+        </div>
+      </div>
+
     </section>
 
     <!-- VUE 8 : PERSONNALISATION & PARAMÈTRES -->
@@ -249,6 +275,29 @@
 
         <button id="btn-reset-theme-colors" class="btn btn-secondary" style="margin-top: 10px;">Réinitialiser les couleurs</button>
       </div>
+
+      <div class="settings-card" style="margin-top:20px;">
+        <h3>Couleur du texte</h3>
+        <p class="text-muted" style="margin-bottom: 15px;">Personnalisez la couleur de la police d'écriture de l'application.</p>
+
+        <div class="form-group">
+          <label for="color-text">Texte principal :</label>
+          <input type="color" id="color-text" class="form-color-picker" value="#1f2937">
+        </div>
+
+        <div class="form-group">
+          <label for="color-heading">Titres :</label>
+          <input type="color" id="color-heading" class="form-color-picker" value="#1f2937">
+        </div>
+
+        <div class="form-group">
+          <label for="color-muted">Texte secondaire :</label>
+          <input type="color" id="color-muted" class="form-color-picker" value="#6b7280">
+        </div>
+
+        <button id="btn-reset-text-colors" class="btn btn-secondary" style="margin-top: 10px;">Réinitialiser les couleurs de texte</button>
+      </div>
+
 
       <div class="settings-card" style="margin-top:20px;">
         <h3>Police d'écriture</h3>
@@ -400,15 +449,8 @@
     </div>
   </div>
 
-  <!-- POPOVER ANNOTATION (SURLIGNAGE MAGIQUE) -->
-  <div id="annotation-popover" class="annotation-popover hidden">
-    <h4>Note de révision</h4>
-    <textarea id="annotation-input" placeholder="Explication ou réponse au quiz..."></textarea>
-    <div class="popover-actions">
-      <button id="btn-save-annotation" class="btn btn-primary btn-small">Enregistrer</button>
-      <button id="btn-remove-highlight" class="btn btn-danger btn-small">Supprimer</button>
-    </div>
-  </div>
+  <!-- (Le surlignage magique a été remplacé par l'assistant IA) -->
+
 
   <!-- MODALE SÉLECTION DE COULEUR (MATIÈRES) -->
   <div id="modal-color" class="modal-backdrop hidden">
